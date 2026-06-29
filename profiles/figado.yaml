@@ -15,7 +15,9 @@ nome_exibicao: "Fígado"
 estado_regulatorio: PESQUISA
 
 # Modalidade aceita. O estágio 1 ABORTA se o exame não for desta modalidade.
-modalidade: [MRI]
+# "MR" é o código DICOM padrão (tag 0008,0060) para ressonância; "MRI" é aceito
+# por conveniência/legado. Sem "MR" o gate rejeitaria exames de RM legítimos.
+modalidade: [MR, MRI]
 
 # Normalização de referência/inspeção (zscore p/ RM; minmax disponível).
 # OBS: NÃO é o que vai para o segmentador — o TotalSegmentator normaliza internamente.
