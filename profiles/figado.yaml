@@ -1,0 +1,67 @@
+# =====================================================================
+# Perfil de órgão: FÍGADO
+# ---------------------------------------------------------------------
+# Toda a configuração específica do órgão mora AQUI, não no código.
+# Trocar de órgão = copiar este arquivo e ajustar (ex.: baco.yaml com
+# rotulo_alvo: spleen). O motor (dtwin/) não muda.
+# Ver contexto/04_ARQUITETURA.md e contexto/02_DOMINIO_CLINICO.md.
+# =====================================================================
+
+id: figado
+nome_exibicao: "Fígado"
+
+# Estado regulatório (contexto/03_REGULATORIO_LGPD.md). O MVP roda em PESQUISA;
+# a transição para CLINICO é um gate formal, não um simples valor aqui.
+estado_regulatorio: PESQUISA
+
+# Modalidade aceita. O estágio 1 ABORTA se o exame não for desta modalidade.
+modalidade: [MRI]
+
+# Normalização de referência/inspeção (zscore p/ RM; minmax disponível).
+# OBS: NÃO é o que vai para o segmentador — o TotalSegmentator normaliza internamente.
+normalizacao: zscore
+
+# --- Segmentação do ÓRGÃO (automática) -------------------------------
+segmentacao_orgao:
+  motor: totalsegmentator_mri
+  motor_task: total_mr        # task de RM do TotalSegmentator (50 estruturas)
+  rotulo_alvo: liver          # classe a extrair da saída do modelo
+
+# --- Segmentação da LESÃO (manual no 3D Slicer no MVP) ----------------
+segmentacao_lesao:
+  modo: manual_slicer
+  ferramentas_sugeridas: [threshold, region_growing, paint]
+
+# --- Refino das máscaras ---------------------------------------------
+refino:
+  orgao:
+    opening: true             # remove ruído/pontas
+    opening_radius: 2
+    min_volume_voxels: 300    # descarta fragmentos
+  lesao:
+    opening: false            # NÃO erodir: lesão pequena é real
+    opening_radius: 1
+    min_volume_voxels: 30
+
+# --- Geração de malha -------------------------------------------------
+mesh:
+  nivel_marching_cubes: 0.5
+  suavizacao_iteracoes: 30
+  feature_angle: 60.0
+  cor_orgao: "#C8A27D"        # consumido pelo manifesto do visualizador
+  cor_lesao: "#D7263D"
+
+# --- Exportação -------------------------------------------------------
+exportacao:
+  sistema_coordenadas: LPS    # padrão de impressão 3D / 3D Slicer
+
+# --- Flywheel (acervo p/ treino futuro de IA de lesão) ----------------
+flywheel:
+  dir: "flywheel"
+
+# =====================================================================
+# FUTURO (fase 2 — contexto/10_MATURIDADE_DIGITAL_TWIN.md):
+#   - motor_task: liver_segments_mr  -> segmentos de Couinaud (RM)
+#   - adicionar vasculatura hepática
+#   - tetraedralização (malha volumétrica) p/ FEA biomecânico (Nível 2)
+# =====================================================================
