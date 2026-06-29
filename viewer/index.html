@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Digital Twin — Visualizador (modo Pesquisa)</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+    #banner { background: #7a1320; color: #fff; padding: 8px 14px; font-size: 13px; text-align: center; }
+    #wrap { display: flex; height: calc(100vh - 35px); }
+    #canvas-holder { flex: 1; position: relative; }
+    canvas { display: block; }
+    #panel { width: 280px; padding: 16px; background: #161b22; border-left: 1px solid #30363d; overflow-y: auto; }
+    #panel h1 { font-size: 15px; margin: 0 0 12px; }
+    .row { margin: 10px 0; font-size: 13px; }
+    label { display: flex; align-items: center; gap: 8px; }
+    #drop { border: 2px dashed #30363d; border-radius: 8px; padding: 18px; text-align: center; font-size: 13px; color: #8b949e; cursor: pointer; }
+    #drop.hover { border-color: #58a6ff; color: #58a6ff; }
+    .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    #meta { font-size: 12px; color: #8b949e; margin-top: 14px; white-space: pre-wrap; }
+    input[type=range] { width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="banner">⚠️ Modo Pesquisa — NÃO destinado a decisão clínica. Coordenadas LPS.</div>
+  <div id="wrap">
+    <div id="canvas-holder"></div>
+    <div id="panel">
+      <h1>Digital Twin — Visualizador</h1>
+      <div id="drop">Arraste a pasta <b>outputs/</b> aqui<br/>(ou os arquivos: manifest + STLs)</div>
+      <div id="controls"></div>
+      <div id="meta"></div>
+    </div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
