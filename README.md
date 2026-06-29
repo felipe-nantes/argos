@@ -159,6 +159,15 @@ pipeline não fabrica nada).
 
 (Para descobrir nomes de classe válidos: `totalseg_info --classes -ta total_mr`.)
 
+### Ferramentas de produção
+
+- **Testes:** `.venv/Scripts/python.exe -m pytest` (não requer GPU/torch).
+- **Preflight:** `digital-twin doctor` — checa dependências e device.
+- **Caso sintético:** `python tools/make_synthetic_case.py --out casos/sintetico`
+  gera um caso fictício para rodar `finalize` sem GPU/Slicer/DICOM.
+- **Visualizador web:** `viewer/index.html` (Three.js, sem build) — ver `viewer/README.md`.
+- **Guia de execução completo:** `docs/RUNNING.md`.
+
 ### Fora do escopo do MVP
 
 Frontend do visualizador web, integração PACS, pseudonimização ativa, FEA /
