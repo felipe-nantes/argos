@@ -36,3 +36,22 @@ def test_finalize_no_lesion_flag(synthetic_case):
     roles = {m["role"] for m in data["meshes"]}
     assert "orgao" in roles
     assert "lesao" not in roles
+
+
+def test_refinalize_no_lesion_drops_prior_lesion(synthetic_case):
+    """Re-running finalize with --no-lesion after a lesion run must not keep the
+    stale lesion mesh/STL. Finalize has to be idempotent against prior artifacts."""
+    engine = Engine(Path("profiles/figado.yaml"))
+    # first pass: real lesion present
+    case = engine.finalize(str(synthetic_case.root), no_lesion=False)
+    assert (case.outputs / "figado_lesao.stl").exists()
+
+    # operator decides there is no lesion: drop the mask, re-finalize
+    synthetic_case.mask_lesion.unlink()
+    case = engine.finalize(str(synthetic_case.root), no_lesion=True)
+
+    data = json.loads((case.outputs / "viewer_manifest.json").read_text(encoding="utf-8"))
+    roles = {m["role"] for m in data["meshes"]}
+    assert "lesao" not in roles, "stale lesion survived a --no-lesion re-finalize"
+    assert not (case.outputs / "figado_lesao.stl").exists()
+    assert not case.mesh_lesion.exists()

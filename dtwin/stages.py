@@ -455,6 +455,11 @@ def stage6_mesh(case: Case, profile: dict) -> None:
             lesion_mesh.n_points, lesion_mesh.n_cells,
         )
     else:
+        # Sem lesão: remove malha de uma execução anterior para que o estágio 7 não
+        # republique uma lesão obsoleta (finalize idempotente, sem dado fantasma).
+        if case.mesh_lesion.exists():
+            case.mesh_lesion.unlink()
+            log.info("Estágio 6: malha de lesão obsoleta removida (caso sem lesão).")
         log.info("Estágio 6: sem malha de lesão (máscara vazia).")
 
 
@@ -471,10 +476,15 @@ def stage7_export_publish(case: Case, profile: dict) -> None:
 
     items = []
     for role, vtp, color in plan:
+        stl = case.outputs / f"{profile['id']}_{role}.stl"
         if not vtp.exists():
+            # Remove STL de execução anterior para este papel; sem isso, um caso
+            # que deixou de ter lesão republicaria o STL antigo (dado fantasma).
+            if stl.exists():
+                stl.unlink()
+                log.info("Estágio 7: STL obsoleto removido -> %s", stl)
             continue
         mesh = pv.read(str(vtp))
-        stl = case.outputs / f"{profile['id']}_{role}.stl"
         try:
             mesh.save(str(stl))  # API correta (corrige o pv.save_mesh_as inexistente)
         except Exception as e:  # noqa: BLE001
