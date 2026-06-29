@@ -68,7 +68,41 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Caso sem lesão (escolha explícita; não fabrica nada).",
     )
+
+    sub.add_parser("doctor", help="Checa dependências e ambiente (não roda segmentação).")
     return ap
+
+
+def run_doctor() -> int:
+    import importlib
+
+    core = ["SimpleITK", "numpy", "scipy", "skimage", "pyvista", "pydicom", "yaml", "nibabel"]
+    print("Dependências do núcleo:")
+    all_ok = True
+    for mod in core:
+        try:
+            importlib.import_module(mod)
+            print(f"  [OK]   {mod}")
+        except Exception as e:  # noqa: BLE001
+            all_ok = False
+            print(f"  [FALTA] {mod}: {e}")
+
+    print("Segmentação automática (opcional, requer extra [seg]):")
+    try:
+        importlib.import_module("totalsegmentator")
+        print("  [OK]   TotalSegmentator importável")
+    except Exception:  # noqa: BLE001
+        print("  [FALTA] TotalSegmentator — instale com: pip install .[seg]")
+
+    try:
+        torch = importlib.import_module("torch")
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"  [INFO] torch device: {dev}")
+    except Exception:  # noqa: BLE001
+        print("  [INFO] torch ausente (esperado se ainda não instalou [seg]).")
+
+    print("\nNúcleo completo." if all_ok else "\nNúcleo INCOMPLETO — rode: pip install -e .")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -76,6 +110,8 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     _banner()
     try:
+        if args.cmd == "doctor":
+            return run_doctor()
         engine = Engine(Path(args.profile))
         if args.cmd == "prepare":
             case = engine.prepare(
