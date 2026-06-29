@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Pipeline artifacts (patient/output data never committed)
+casos/
+flywheel/
+*.nii
+*.nii.gz
+*.stl
+*.vtp
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digital-twin-cirurgico"
+version = "0.1.0"
+description = "Pipeline órgão-agnóstico: DICOM (RM) -> modelo 3D (órgão + lesão). MVP Nível 1, modo Pesquisa."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "Proprietary" }
+authors = [{ name = "UEM · GETS · HU" }]
+dependencies = [
+    "SimpleITK>=2.3",
+    "nibabel>=5.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.22",
+    "pyvista>=0.43",
+    "pydicom>=2.4",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+seg = ["TotalSegmentator>=2.4"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+digital-twin = "digital_twin:main"
+
+[tool.setuptools]
+py-modules = ["digital_twin"]
+packages = ["dtwin"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

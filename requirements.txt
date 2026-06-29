@@ -1,0 +1,30 @@
+# =====================================================================
+# Dependências — Digital Twin cirúrgico (MVP, Nível 1, modo Pesquisa)
+# =====================================================================
+# FONTE DA VERDADE dos pins: pyproject.toml. Este arquivo é um atalho de
+# conveniência (pip install -r requirements.txt) e deve espelhar aquele.
+
+# --- Núcleo do pipeline ---
+SimpleITK>=2.3          # leitura DICOM/NIfTI preservando geometria
+nibabel>=5.0            # I/O NIfTI (dependência transitiva comum no domínio)
+numpy>=1.24
+scipy>=1.10
+scikit-image>=0.22      # API atual: morphology usa footprint= (não selem=)
+pyvista>=0.43           # malha 3D + exportação STL
+pydicom>=2.4            # leitura de metadados (modalidade) na ingestão
+PyYAML>=6.0             # leitura dos perfis de órgão
+
+# --- Segmentação automática do órgão ---
+# Traz torch + nnunetv2 como dependências. Usa a task total_mr para RM.
+# GPU fortemente recomendada (ver contexto/07_INFRA_CUSTOS.md).
+TotalSegmentator>=2.4
+
+# =====================================================================
+# NÃO instalados via pip (instalação à parte):
+#   - 3D Slicer  -> edição/marcação manual da lesão (estágio 4)
+#                   https://www.slicer.org
+#
+# FORA do MVP (fase 2 — contexto/10_MATURIDADE_DIGITAL_TWIN.md):
+#   - tetraedralização (TetGen/gmsh/pygalmesh) e solver FEA (FEBio/SfePy)
+#   - frontend do visualizador web (Niivue / VTK.js / Three.js)
+# =====================================================================
