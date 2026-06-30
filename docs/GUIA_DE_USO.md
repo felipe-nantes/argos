@@ -121,6 +121,17 @@ Para ver no navegador, vá direto à **Parte 5** (use o caminho
 Estágios 1–4a: ingestão + des-identificação + normalização + **segmentação
 automática do órgão**.
 
+> ### ⚠️ Onde entra a RM? **Não há "upload".**
+> Este sistema é **linha de comando** — não existe site nem botão de enviar
+> arquivo. A RM "entra" como o **caminho de uma pasta** que você passa ao
+> `prepare`. Dois pontos:
+> 1. **A RM é uma PASTA, não um arquivo.** Um exame de RM são vários `.dcm`
+>    (uma fatia cada). Você aponta para a **pasta** que contém todos eles.
+> 2. **Deixe essa pasta onde quiser no disco** (ex.: `C:\exames\paciente001\`)
+>    e informe esse caminho como **primeiro argumento** do `prepare` (abaixo).
+>    Nada é copiado para um servidor; o pipeline lê a pasta direto do disco e
+>    grava a saída em `--case-dir` (a pasta do caso, que você escolhe).
+
 Você precisa de uma **pasta com a série DICOM de RM** de um paciente (uma pasta
 contendo os arquivos `.dcm` das fatias).
 
@@ -128,6 +139,9 @@ contendo os arquivos `.dcm` das fatias).
 .\.venv\Scripts\python.exe digital_twin.py prepare "C:\caminho\serie_dicom" `
     --case-dir casos\paciente001 `
     --profile profiles\figado.yaml
+#                                  ^^^^^^^^^^^^^^^^^^^^^^
+#   "C:\caminho\serie_dicom"  = a PASTA da RM (sua entrada — troque pelo caminho real)
+#   --case-dir casos\paciente001 = onde a SAÍDA é gravada (você escolhe)
 ```
 
 Opções úteis:
