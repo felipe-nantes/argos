@@ -14,10 +14,13 @@ pyvista>=0.43           # malha 3D + exportação STL
 pydicom>=2.4            # leitura de metadados (modalidade) na ingestão
 PyYAML>=6.0             # leitura dos perfis de órgão
 
-# --- Segmentação automática do órgão ---
-# Traz torch + nnunetv2 como dependências. Usa a task total_mr para RM.
-# GPU fortemente recomendada (ver contexto/07_INFRA_CUSTOS.md).
-TotalSegmentator>=2.4
+# --- Segmentação automática do órgão (OPCIONAL — extra [seg]) ---
+# NÃO instalado por padrão: traz torch + nnunetv2 (vários GB) e só roda bem em
+# GPU. Equivale ao extra [seg] do pyproject.toml. Instale apenas na máquina de
+# execução real (ver contexto/07_INFRA_CUSTOS.md):
+#     pip install -e .[seg]
+# Descomente a linha abaixo só se for instalar via requirements.txt:
+# TotalSegmentator>=2.4
 
 # =====================================================================
 # NÃO instalados via pip (instalação à parte):
