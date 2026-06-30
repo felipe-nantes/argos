@@ -166,7 +166,8 @@ pipeline não fabrica nada).
 - **Caso sintético:** `python tools/make_synthetic_case.py --out casos/sintetico`
   gera um caso fictício para rodar `finalize` sem GPU/Slicer/DICOM.
 - **Visualizador web:** `viewer/index.html` (Three.js, sem build) — ver `viewer/README.md`.
-- **Guia de execução completo:** `docs/RUNNING.md`.
+- **Guia de uso passo a passo (tutorial prático):** `docs/GUIA_DE_USO.md`.
+- **Guia de execução (referência curta):** `docs/RUNNING.md`.
 
 ### Fora do escopo do MVP
 
