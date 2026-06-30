@@ -135,6 +135,23 @@ Ao final, o programa **imprime as instruções exatas** da etapa manual. Leia-as
 > errado; instale o extra `[seg]` (Parte 1.2 B). O pipeline **nunca inventa** uma
 > máscara — ele aborta. Isso é proposital.
 
+### 3.1 Smoke test automático (recomendado na 1ª execução)
+
+Em vez de rodar `prepare`/`finalize` na mão e conferir os arquivos, use o smoke
+que roda tudo e **valida cada artefato**, devolvendo passou/falhou:
+
+```powershell
+# com uma lesão já pronta (.nii.gz):
+.\.venv\Scripts\python.exe tools\smoke_gpu.py --dicom "C:\serie_dicom" --lesion "C:\mask_lesion.nii.gz"
+
+# ou validando só a mecânica, sem lesão:
+.\.venv\Scripts\python.exe tools\smoke_gpu.py --dicom "C:\serie_dicom" --no-lesion
+```
+
+Imprime um relatório linha a linha e sai com código **0** (tudo OK) ou **1**
+(alguma checagem falhou). É a forma mais rápida de provar que a segmentação real
++ ingestão DICOM + STL + manifesto funcionam ponta a ponta nesta máquina.
+
 ---
 
 ## Parte 4 — Etapa manual: marcar a LESÃO no 3D Slicer
