@@ -40,11 +40,16 @@ def write_dicom_series(folder: Path, volume_zyx, modality="MR"):
     uid = "1.2.826.0.1.3680043.2.1125.1." + "".join(
         np.random.default_rng(1).integers(0, 9, 20).astype(str)
     )
+    spacing_z = img.GetSpacing()[2]
     for i in range(volume_zyx.shape[0]):
         sl = img[:, :, i]
         sl.SetMetaData("0008|0060", modality)
         sl.SetMetaData("0020|000e", uid)
         sl.SetMetaData("0020|0013", str(i))
+        # Geometria por fatia: sem isto o leitor de série não reconstrói o
+        # espaçamento em z. Posição em z = i * spacing_z.
+        sl.SetMetaData("0020|0037", "1\\0\\0\\0\\1\\0")               # ImageOrientationPatient
+        sl.SetMetaData("0020|0032", f"0\\0\\{i * spacing_z}")         # ImagePositionPatient
         writer.SetFileName(str(folder / f"slice_{i:03d}.dcm"))
         writer.Execute(sl)
 

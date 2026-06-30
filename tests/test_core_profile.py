@@ -43,3 +43,9 @@ def test_missing_rotulo_alvo_aborts(tmp_path):
 def test_real_figado_profile_loads():
     data = load_profile(__import__("pathlib").Path("profiles/figado.yaml"))
     assert data["id"] == "figado"
+
+
+def test_load_profile_accepts_str_path():
+    # load_profile tolera str além de Path (uso direto da API)
+    data = load_profile("profiles/figado.yaml")
+    assert data["id"] == "figado"

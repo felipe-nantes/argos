@@ -127,7 +127,8 @@ def now_utc() -> str:
 REQUIRED_PROFILE_KEYS = ("id", "modalidade", "segmentacao_orgao")
 
 
-def load_profile(path: Path) -> dict[str, Any]:
+def load_profile(path: Path | str) -> dict[str, Any]:
+    path = Path(path)  # tolera str além de Path (uso direto da API/teste)
     if not path.exists():
         raise PipelineError(f"Perfil não encontrado: {path}")
     with open(path, "r", encoding="utf-8") as f:
