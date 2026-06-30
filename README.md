@@ -167,6 +167,8 @@ pipeline não fabrica nada).
   gera um caso fictício para rodar `finalize` sem GPU/Slicer/DICOM.
 - **Visualizador web:** `viewer/index.html` (Three.js, sem build) — ver `viewer/README.md`.
 - **Guia de uso passo a passo (tutorial prático):** `docs/GUIA_DE_USO.md`.
+- **Roteiro de apresentação (demo 5 min, offline):** `docs/DEMO.md`.
+- **Smoke test na caixa GPU (exame real):** `tools/smoke_gpu.py`.
 - **Guia de execução (referência curta):** `docs/RUNNING.md`.
 
 ### Fora do escopo do MVP

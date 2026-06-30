@@ -3,6 +3,10 @@
 Visualizador 3D estático (Three.js, sem build) para os STLs gerados pelo pipeline.
 **NÃO destinado a decisão clínica.** Coordenadas LPS.
 
+> **Offline:** o Three.js (+ STLLoader + OrbitControls) está vendorizado em
+> `viewer/vendor/` e resolvido por um importmap no `index.html`. Não há
+> dependência de CDN — funciona sem internet (ex.: na apresentação).
+
 ## Uso rápido (drag & drop)
 
 1. Abra `viewer/index.html` no navegador (duplo clique funciona).

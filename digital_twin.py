@@ -73,6 +73,21 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _attach_file_log(case_dir: str) -> None:
+    """Grava um run.log no diretório do caso (trilha de auditoria do run real).
+
+    O console continua recebendo os logs; este handler só ADICIONA um arquivo
+    persistente por caso. run.log fica dentro de casos/<id>/ (gitignored)."""
+    d = Path(case_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    fh = logging.FileHandler(d / "run.log", encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.getLogger().addHandler(fh)
+    log = logging.getLogger("dtwin")
+    log.info("=== Início do run (cmd em %s) — trilha em %s ===", d, d / "run.log")
+
+
 def run_doctor() -> int:
     import importlib
 
@@ -112,6 +127,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "doctor":
             return run_doctor()
+        _attach_file_log(args.case_dir)
         engine = Engine(Path(args.profile))
         if args.cmd == "prepare":
             case = engine.prepare(

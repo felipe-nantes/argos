@@ -1,6 +1,8 @@
-import * as THREE from "https://esm.sh/three@0.160.0";
-import { STLLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/STLLoader.js";
-import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+// Three.js vendorizado em viewer/vendor/ (sem CDN — funciona offline na
+// apresentação). O bare specifier "three" é resolvido pelo importmap de index.html.
+import * as THREE from "three";
+import { STLLoader } from "./vendor/STLLoader.js";
+import { OrbitControls } from "./vendor/OrbitControls.js";
 
 const holder = document.getElementById("canvas-holder");
 const controlsDiv = document.getElementById("controls");
