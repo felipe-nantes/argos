@@ -50,7 +50,20 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
 ```
 
-**Ambiente (B) — com GPU (execução real):**
+**Ambiente (B) — com GPU (execução real): forma rápida (1 comando)**
+
+Um bootstrap cria o venv, instala tudo e **verifica** (GPU + rótulo do órgão):
+```powershell
+py -3.13 tools\setup_real_env.py
+```
+Ele imprime um relatório e sai com **0 = ambiente pronto** ou **1 = algo falta**.
+Para já validar ponta a ponta com um exame real, acrescente o smoke:
+```powershell
+py -3.13 tools\setup_real_env.py --smoke "C:\serie_dicom" --no-lesion
+```
+Já tem o ambiente e só quer reconferir? `py -3.13 tools\setup_real_env.py --verify-only`.
+
+**Ambiente (B) — alternativa manual:**
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip

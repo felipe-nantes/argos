@@ -168,6 +168,8 @@ pipeline não fabrica nada).
 - **Visualizador web:** `viewer/index.html` (Three.js, sem build) — ver `viewer/README.md`.
 - **Guia de uso passo a passo (tutorial prático):** `docs/GUIA_DE_USO.md`.
 - **Roteiro de apresentação (demo 5 min, offline):** `docs/DEMO.md`.
+- **Preparar a caixa GPU (1 comando):** `py -3.13 tools/setup_real_env.py` — cria
+  venv, instala `[seg]` e verifica GPU + rótulo do órgão.
 - **Smoke test na caixa GPU (exame real):** `tools/smoke_gpu.py`.
 - **Guia de execução (referência curta):** `docs/RUNNING.md`.
 
