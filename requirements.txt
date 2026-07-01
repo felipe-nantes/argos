@@ -13,6 +13,7 @@ scikit-image>=0.22      # API atual: morphology usa footprint= (não selem=)
 pyvista>=0.43           # malha 3D + exportação STL
 pydicom>=2.4            # leitura de metadados (modalidade) na ingestão
 PyYAML>=6.0             # leitura dos perfis de órgão
+Pillow>=10.0             # montagem PNG 2D para triagem visual MedGemma
 
 # --- Segmentação automática do órgão (OPCIONAL — extra [seg]) ---
 # NÃO instalado por padrão: traz torch + nnunetv2 (vários GB) e só roda bem em
@@ -21,6 +22,11 @@ PyYAML>=6.0             # leitura dos perfis de órgão
 #     pip install -e .[seg]
 # Descomente a linha abaixo só se for instalar via requirements.txt:
 # TotalSegmentator>=2.4
+
+# --- Backend MedGemma local (OPCIONAL — extra [medgemma]) -----------
+# Modelo gated, instalado apenas após aceitar os termos no Hugging Face:
+#     pip install -e .[medgemma]
+# O modelo/weights não são baixados por requirements.txt.
 
 # =====================================================================
 # NÃO instalados via pip (instalação à parte):

@@ -25,7 +25,7 @@ e **a implementação do pipeline** (raiz + `dtwin/` + `profiles/`).
 ```
 digital_twin_cirurgico/
 ├── README.md                       # este arquivo (porta de entrada)
-├── contexto/                       # ESTRATÉGIA — 11 módulos
+├── contexto/                       # ESTRATÉGIA — 12 módulos
 │   ├── 00_CONTEXTO.md              #   índice / camada de orientação
 │   ├── 01_VISAO.md
 │   ├── 02_DOMINIO_CLINICO.md
@@ -36,16 +36,24 @@ digital_twin_cirurgico/
 │   ├── 07_INFRA_CUSTOS.md
 │   ├── 08_ROADMAP.md
 │   ├── 09_NEGOCIO.md
-│   └── 10_MATURIDADE_DIGITAL_TWIN.md
+│   ├── 10_MATURIDADE_DIGITAL_TWIN.md
+│   └── 11_MEDGEMMA_SCREENING.md
 │
 ├── digital_twin.py                 # CÓDIGO — entrada (CLI), obedece o motor
 ├── requirements.txt
+├── configs/
+│   ├── medgemma_4b.yaml            # backend/modelo inicial configurável
+│   ├── medgemma_local_4b.yaml      # backend local 4-bit operacional
+│   └── medgemma_27b.yaml           # configuração futura, fail-closed
 ├── profiles/
 │   └── figado.yaml                 # perfil do órgão (TODA a config específica)
 └── dtwin/                          # o motor (órgão-agnóstico, determinístico)
     ├── core.py                     #   gates, geometria, Case, loader de perfil
     ├── stages.py                   #   os 7 estágios, cada um com seu gate
-    └── engine.py                   #   orquestrador (prepare / finalize)
+    ├── engine.py                   #   orquestrador (prepare / finalize)
+    ├── medgemma_panel.py           #   montagem 2D e gates de entrada
+    ├── medgemma_client.py          #   config, prompt, adaptador e parser
+    └── medgemma_screening.py       #   CLI do fluxo opcional pós-prepare
 ```
 
 Princípio central que liga as duas metades: **regra de domínio mora em config
@@ -69,6 +77,7 @@ nunca mexer no motor.
 | `08_ROADMAP.md` | Fase 0→3, gates entre fases |
 | `09_NEGOCIO.md` | Modelos de receita e sustentação (em aberto) |
 | `10_MATURIDADE_DIGITAL_TWIN.md` | Escada de 4 níveis: modelo anatômico → twin preditivo |
+| `11_MEDGEMMA_SCREENING.md` | Triagem visual hepática MedGemma (Pesquisa, revisão humana) |
 
 ---
 
@@ -172,9 +181,21 @@ pipeline não fabrica nada).
   venv, instala `[seg]` e verifica GPU + rótulo do órgão.
 - **Smoke test na caixa GPU (exame real):** `tools/smoke_gpu.py`.
 - **Guia de execução (referência curta):** `docs/RUNNING.md`.
+- **Triagem MedGemma:** `python -m dtwin.medgemma_screening ... --panel-only`
+  gera a montagem 2D sem lesão pré-marcada; configuração e gates em
+  `contexto/11_MEDGEMMA_SCREENING.md`.
+- **Backend MedGemma local:** `tools/start_medgemma.ps1` inicia o 4B quantizado
+  após autenticação/licença no Hugging Face; `tools/stop_medgemma.ps1` encerra.
+- **Webapp de demonstração (localhost):** `webapp/` — o usuário arrasta a pasta
+  DICOM de RM e recebe só o relatório MedGemma; todo o pipeline (des-identificação,
+  segmentação, montagem, inferência) roda escondido, em subprocessos isolados e
+  "à prova de falhas". Suba com o MedGemma ativo e rode
+  `.venv\Scripts\python.exe -m uvicorn webapp.server:app --port 8000`, depois abra
+  `http://127.0.0.1:8000`. Se qualquer etapa falhar, o app mostra um cartão honesto
+  ("análise não concluída") — nunca um achado clínico fabricado.
 
 ### Fora do escopo do MVP
 
-Frontend do visualizador web, integração PACS, pseudonimização ativa, FEA /
+Interface clínica integrada, integração PACS, pseudonimização ativa, FEA /
 tetraedralização (Nível 2), relatório PDF comparativo e modelo próprio de lesão —
 todos mapeados em `contexto/08_ROADMAP.md` e `contexto/10_MATURIDADE_DIGITAL_TWIN.md`.

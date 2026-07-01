@@ -54,6 +54,7 @@ mapeado no `08_ROADMAP.md`.
 | `08_ROADMAP.md` | Fase 0→3, gates entre fases | Planejamento temporal |
 | `09_NEGOCIO.md` | Modelos de receita e sustentação (em aberto) | Estratégia de longo prazo |
 | `10_MATURIDADE_DIGITAL_TWIN.md` | Escada de 4 níveis: modelo anatômico → twin preditivo | Visão de evolução até virar um twin de fato |
+| `11_MEDGEMMA_SCREENING.md` | Triagem visual hepática opcional, sem lesão pré-marcada | Configuração, gates e operação do MedGemma |
 
 ## Time
 

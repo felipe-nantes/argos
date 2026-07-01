@@ -9,6 +9,8 @@ dist/
 build/
 .venv/
 venv/
+.medgemma/
+.claude/
 
 # Pipeline artifacts (patient/output data never committed)
 casos/
@@ -17,6 +19,19 @@ flywheel/
 *.nii.gz
 *.stl
 *.vtp
+*.dcm
+*.ima
+
+# Local medical datasets / downloaded archives
+RMs_doentes/
+RMs_saudaveis/
+RMs_doentes.zip
+RMs_saudaveis.zip
+__MACOSX/
+/data/
+/datasets/
+/dicom/
+/dicoms/
 
 # OS / editor
 .DS_Store

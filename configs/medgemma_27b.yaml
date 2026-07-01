@@ -1,0 +1,95 @@
+# Configuração FUTURA. Em 2026-06-30 não foi encontrado um model_id oficial
+# "MedGemma 1.5 27B". O arquivo aborta de propósito até o id/backend corretos
+# serem definidos, evitando executar outro modelo sob um rótulo falso.
+medgemma_screening:
+  enabled: true
+  organ: liver
+  modality: MRI
+  regulatory_mode: RESEARCH
+  lesion_pre_marked: false
+
+  panel:
+    axial_slices: 9
+    tile_size: 320
+    include_coronal: true
+    include_sagittal: true
+    overlay_mode: contour
+    contour_width: 2
+    contour_color_rgb: [255, 196, 0]
+    preserve_grayscale_signal: true
+    window_percentile_low: 1.0
+    window_percentile_high: 99.0
+
+  validation:
+    min_liver_voxels: 300
+    max_liver_fraction: 0.8
+
+  privacy:
+    remove_png_metadata: true
+    require_visible_phi_confirmation: true
+
+  medgemma:
+    enabled: true
+    provider: http_json_v1
+    model_family: MedGemma
+    model_version: "MedGemma 1.5 27B"
+    model_parameter_scale: "27B"
+    model_id: null
+    backend_configured: false
+    model_available: false
+    endpoint_url: "http://127.0.0.1:8001/generate"
+    timeout_seconds: 300
+    minimum_timeout_seconds: 300
+    max_retries: 0
+    max_input_bytes: 10485760
+    max_image_pixels: 4000000
+    max_prompt_chars: 12000
+    max_output_tokens: 1536
+    execution_mode: local
+    device: cuda
+    quantization: null
+    allow_remote: false
+
+  output:
+    save_panel_png: true
+    save_manifest_json: true
+    save_report_json: true
+
+  report:
+    allowed_states: [POSITIVA, NEGATIVA, INCONCLUSIVA]
+    allowed_confidence: [baixa, moderada, alta]
+    requires_human_review: true
+    disclaimer: "Uso em pesquisa. Não destinado à decisão clínica. Não é diagnóstico nem laudo médico. Revisão médica obrigatória."
+
+  prompt:
+    template: |-
+      Você está analisando uma montagem de imagens de RM abdominal em modo de pesquisa.
+
+      A região do fígado está segmentada somente por contorno. Não há lesão previamente marcada. Avalie somente o parênquima hepático dentro da região segmentada.
+
+      Sua tarefa é identificar se existe evidência visual de possível anormalidade focal hepática nas imagens fornecidas. Isto não é diagnóstico e não é laudo médico. Revisão humana obrigatória por radiologista, cirurgião ou médico pesquisador.
+
+      Responda obrigatoriamente com um único objeto JSON, sem Markdown, sem emitir diagnóstico definitivo e sem recomendar conduta clínica.
+
+      Classifique resultado_hipotese em exatamente uma categoria:
+      - POSITIVA: há possível anormalidade visual no fígado segmentado.
+      - NEGATIVA: não há evidência visual suficiente de anormalidade focal nas imagens fornecidas.
+      - INCONCLUSIVA: a qualidade, quantidade ou apresentação das imagens não permite avaliação confiável.
+
+      Use exatamente este schema:
+      {
+        "resultado_hipotese": "POSITIVA | NEGATIVA | INCONCLUSIVA",
+        "resumo_do_achado": "string",
+        "localizacao_aproximada": "string",
+        "sinais_visuais_observados": ["string"],
+        "confianca": "baixa | moderada | alta",
+        "limitacoes_da_analise": ["string"],
+        "necessidade_de_revisao_humana": true
+      }
+
+      Importante:
+      - Não afirme que o paciente tem ou não tem câncer, tumor ou doença.
+      - Não recomende tratamento, cirurgia, biópsia ou medicação.
+      - Não substitua avaliação de radiologista ou cirurgião.
+      - Baseie-se apenas nas imagens fornecidas.
+      - A resposta destina-se exclusivamente a pesquisa e educação.

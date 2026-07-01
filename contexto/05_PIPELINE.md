@@ -171,3 +171,14 @@ Erros do script original corrigidos:
   isoladamente.
 - **Determinismo:** mesmo input + mesma config + mesma marcação humana ⇒ mesmo
   output.
+
+---
+
+## Fluxo opcional pós-`prepare`: triagem visual MedGemma
+
+Após o fígado ser segmentado/revisado, um fluxo paralelo pode gerar uma montagem
+2D da RM com **somente o contorno hepático** e solicitar ao MedGemma uma hipótese
+visual em modo Pesquisa. Ele não recebe máscara de lesão, não altera os sete
+estágios acima e não produz diagnóstico. A saída aceita somente `POSITIVA`,
+`NEGATIVA` ou `INCONCLUSIVA`, sempre pendente de revisão humana. Contrato, gates e
+uso: `11_MEDGEMMA_SCREENING.md`.

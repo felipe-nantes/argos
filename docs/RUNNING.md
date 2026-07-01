@@ -56,3 +56,37 @@ Saídas em `casos/paciente001/outputs/`: `figado_orgao.stl`, `figado_lesao.stl`,
 - `Modalidade do exame (...) não bate` → use o perfil correto; `figado.yaml` espera MRI.
 - Wheels falhando na instalação → confirme Python **3.13** (`py -3.13`); 3.14 ainda
   não tem wheels de torch/SimpleITK.
+
+## MedGemma local (opcional, modo Pesquisa)
+
+O fluxo MedGemma exige licença aceita e login no Hugging Face. Depois:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[medgemma]"
+.\.venv\Scripts\hf.exe auth login
+.\.venv\Scripts\python.exe tools\setup_medgemma.py
+.\.venv\Scripts\python.exe tools\setup_medgemma.py --local-only
+powershell -ExecutionPolicy Bypass -File tools\start_medgemma.ps1
+```
+
+Gere primeiro o painel e faça a revisão visual de PHI:
+
+```powershell
+.\.venv\Scripts\python.exe -m dtwin.medgemma_screening `
+  --case-dir casos\caso_real_001 `
+  --medgemma-config configs\medgemma_local_4b.yaml `
+  --panel-only
+```
+
+Depois de revisar o PNG, execute a inferência:
+
+```powershell
+.\.venv\Scripts\python.exe -m dtwin.medgemma_screening `
+  --case-dir casos\caso_real_001 `
+  --medgemma-config configs\medgemma_local_4b.yaml `
+  --confirm-no-visible-phi
+```
+
+O relatório fica em `outputs/medgemma/medgemma_report.json`, sempre
+`pending_review`. Nunca coloque o token em arquivos do projeto. Uso e gates
+completos: `contexto/11_MEDGEMMA_SCREENING.md`.

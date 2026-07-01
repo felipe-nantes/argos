@@ -1,0 +1,111 @@
+# MedGemma 1.5 4B — painel MULTIFÁSICO (fusão RGB) para maximizar a acurácia.
+# Mesmo backend local do medgemma_local_4b.yaml; muda a REPRESENTAÇÃO de entrada:
+# fases de RM co-registradas fundidas em canais RGB, recorte e janela no fígado.
+# A revisão humana do painel e a confirmação de PHI continuam obrigatórias.
+medgemma_screening:
+  enabled: true
+  organ: liver
+  modality: MRI
+  regulatory_mode: RESEARCH
+  lesion_pre_marked: false
+
+  panel:
+    mode: multiphase_fusion
+    axial_slices: 9
+    tile_size: 384
+    include_coronal: true
+    include_sagittal: true
+    overlay_mode: contour
+    contour_width: 1
+    contour_color_rgb: [255, 255, 255]
+    preserve_grayscale_signal: false     # imagem derivada (fusão RGB), rotulada como tal
+    window_percentile_low: 2.0
+    window_percentile_high: 98.0
+    window_scope: liver                   # janela calculada DENTRO do fígado, por fase
+    crop_to_liver: true                   # recorte no bounding-box do órgão (só máscara do órgão)
+    crop_margin_frac: 0.08
+    background_dim: 0.35                   # escurece fora do fígado p/ focar o parênquima
+    fusion:
+      channel_map:                        # HCC: realça no arterial e sofre washout -> avermelhado
+        red: art
+        green: pv
+        blue: del
+
+  validation:
+    min_liver_voxels: 300
+    max_liver_fraction: 0.8
+
+  privacy:
+    remove_png_metadata: true
+    require_visible_phi_confirmation: true
+
+  medgemma:
+    enabled: true
+    provider: http_json_v1
+    model_family: MedGemma
+    model_version: "MedGemma 1.5 4B Instruction-Tuned"
+    model_parameter_scale: "4B"
+    model_id: "google/medgemma-1.5-4b-it"
+    backend_configured: true
+    model_available: true
+    endpoint_url: "http://127.0.0.1:8001/generate"
+    healthcheck_url: "http://127.0.0.1:8001/health"
+    timeout_seconds: 300
+    minimum_timeout_seconds: 120
+    max_retries: 0
+    max_input_bytes: 10485760
+    max_image_pixels: 4000000
+    max_prompt_chars: 12000
+    max_output_tokens: 1536               # maior p/ o modelo terminar o raciocínio e emitir o JSON
+    minimum_cuda_memory_gb: 6.0
+    execution_mode: local
+    device: cuda
+    quantization: bitsandbytes-nf4
+    local_files_only: true
+    allow_remote: false
+
+  output:
+    save_panel_png: true
+    save_manifest_json: true
+    save_report_json: true
+
+  report:
+    allowed_states: [POSITIVA, NEGATIVA, INCONCLUSIVA]
+    allowed_confidence: [baixa, moderada, alta]
+    requires_human_review: true
+    disclaimer: "Uso em pesquisa. Não destinado à decisão clínica. Não é diagnóstico nem laudo médico. Revisão médica obrigatória."
+
+  prompt:
+    template: |-
+      Você está analisando uma montagem de RM abdominal em modo de pesquisa.
+
+      Esta é uma imagem DERIVADA: várias fases de RM co-registradas foram fundidas em canais de cor RGB. Vermelho = fase arterial, Verde = fase portal-venosa, Azul = fase tardia. O fígado está delimitado por um contorno branco. Não há lesão previamente marcada. Avalie somente o parênquima hepático dentro da região segmentada.
+
+      Interprete a cor pela dinâmica de realce: uma área que realça na fase arterial e perde sinal nas fases tardias (washout) tende a aparecer avermelhada/alaranjada em relação ao parênquima ao redor; o parênquima normal, que realça de forma mais homogênea entre as fases, tende a aparecer mais acinzentado/esbranquiçado. Procure regiões focais cuja cor destoe do parênquima adjacente.
+
+      Sua tarefa é identificar se existe evidência visual de possível anormalidade focal hepática. Isto não é diagnóstico e não é laudo médico. Revisão humana obrigatória por radiologista, cirurgião ou médico pesquisador.
+
+      Responda obrigatoriamente com um único objeto JSON, sem Markdown, sem emitir diagnóstico definitivo e sem recomendar conduta clínica.
+
+      Classifique resultado_hipotese em exatamente uma categoria:
+      - POSITIVA: há possível anormalidade visual no fígado segmentado.
+      - NEGATIVA: não há evidência visual suficiente de anormalidade focal nas imagens fornecidas.
+      - INCONCLUSIVA: a qualidade, quantidade ou apresentação das imagens não permite avaliação confiável.
+
+      Use exatamente este schema:
+      {
+        "resultado_hipotese": "POSITIVA | NEGATIVA | INCONCLUSIVA",
+        "resumo_do_achado": "string",
+        "localizacao_aproximada": "string",
+        "sinais_visuais_observados": ["string"],
+        "confianca": "baixa | moderada | alta",
+        "limitacoes_da_analise": ["string"],
+        "necessidade_de_revisao_humana": true
+      }
+
+      Importante:
+      - Não afirme que o paciente tem ou não tem câncer, tumor ou doença.
+      - Não recomende tratamento, cirurgia, biópsia ou medicação.
+      - Não substitua avaliação de radiologista ou cirurgião.
+      - Baseie-se apenas nas imagens fornecidas.
+      - A resposta destina-se exclusivamente a pesquisa e educação.

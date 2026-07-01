@@ -112,7 +112,7 @@ Para ver no navegador, vá direto à **Parte 5** (use o caminho
 > ```powershell
 > .\.venv\Scripts\python.exe -m pytest
 > ```
-> Esperado: tudo verde (43 testes).
+> Esperado: toda a suíte verde.
 
 ---
 
