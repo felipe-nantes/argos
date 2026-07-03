@@ -8,6 +8,7 @@ htmlcov/
 dist/
 build/
 .venv/
+.venv-win/
 venv/
 .medgemma/
 .claude/

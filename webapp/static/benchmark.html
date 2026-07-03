@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Argos — Benchmark de datasets</title>
+<link rel="stylesheet" href="/argos.css" />
+</head>
+<body>
+<div class="app-shell">
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M3.2 12s3.2-5.2 8.8-5.2S20.8 12 20.8 12 17.6 17.2 12 17.2 3.2 12 3.2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg></div>
+      <div><p class="brand-name">Argos</p><p class="brand-subtitle">Digital Twin Cirúrgico · UEM · GETS · HU</p></div>
+    </div>
+    <nav class="app-nav" aria-label="Navegação principal"><a href="/">Exame individual</a><a class="active" href="/benchmark.html">Benchmark</a></nav>
+    <div class="header-context"><span class="research-pill">Modo Pesquisa</span></div>
+  </header>
+
+  <main class="page benchmark-page">
+    <section class="page-hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Validação orientada a dados</div>
+        <h1 class="page-title">Meça o desempenho clínico com transparência.</h1>
+        <p class="page-lead">Execute datasets rotulados no pipeline real, acompanhe cada exame e consolide métricas reprodutíveis da triagem MedGemma.</p>
+        <div class="status-row"><span class="chip">Resultados <b>por exame</b></span><span class="chip">Relatórios <b>JSON e CSV</b></span><span class="chip">Revisão humana <b>obrigatória</b></span></div>
+      </div>
+    </section>
+
+    <div class="benchmark-grid">
+      <section class="card" id="setupCard">
+        <div class="section-title"><span class="num">1</span><div><h3>Descreva o dataset</h3><div class="hint">Defina a referência esperada para os exames.</div></div></div>
+        <label class="caption" for="datasetName">Nome do dataset</label>
+        <input id="datasetName" type="text" maxlength="120" placeholder="Ex.: Validação hepática — lote 01" />
+        <div class="types">
+          <label class="type"><input type="radio" name="kind" value="positive"><b>Positivo</b><span>Todos os exames são alterados.</span></label>
+          <label class="type"><input type="radio" name="kind" value="negative"><b>Negativo</b><span>Todos os exames são normais.</span></label>
+          <label class="type"><input type="radio" name="kind" value="mixed" checked><b>Misto</b><span>Rotule cada exame individualmente.</span></label>
+        </div>
+      </section>
+
+      <section class="card" id="uploadCard">
+        <div class="section-title"><span class="num">2</span><div><h3>Envie os exames</h3><div class="hint">Use uma subpasta identificada para cada exame DICOM.</div></div></div>
+        <div class="drop" id="drop">
+          <div class="drop-content">
+            <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 17.5V6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h6A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2h-11A2.5 2.5 0 0 1 4 17.5Z" stroke="currentColor" stroke-width="1.7"/><path d="m9 13 3-3 3 3M12 10v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <b>Arraste a pasta do dataset aqui</b><span>ou clique para selecionar vários exames DICOM</span>
+          </div>
+        </div>
+        <input id="folderInput" type="file" webkitdirectory directory multiple class="hidden" />
+        <div id="detected" class="hidden">
+          <div class="dataset-summary"><span class="chip"><b id="caseCount">0</b> exames</span><span class="chip"><b id="fileCount">0</b> arquivos</span></div>
+          <div class="case-list" id="caseList"></div>
+          <div class="note">Use identificadores anônimos. No modo misto, confirme o rótulo de todos os exames.</div>
+        </div>
+        <div class="actions"><button class="ghost hidden" id="clearBtn">Limpar</button><button class="primary" id="startBtn" disabled>Iniciar benchmark</button></div>
+      </section>
+    </div>
+
+    <section class="card hidden" id="progressCard">
+      <div class="section-title"><span class="num">3</span><div><h3>Benchmark em execução</h3><div class="hint">Os exames são processados sequencialmente pelo pipeline real.</div></div></div>
+      <div class="progress"><div class="bar" id="bar"></div></div>
+      <div class="progress-meta"><span><i class="spin"></i><span id="currentCase">Preparando dataset…</span></span><span id="processed">0 / 0</span></div>
+      <div class="note">Falhas e respostas inconclusivas permanecem visíveis no relatório e nunca são descartadas.</div>
+    </section>
+
+    <section class="card hidden" id="reportCard"></section>
+  </main>
+  <footer>Resultados experimentais em modo Pesquisa. Não usar para diagnóstico, laudo ou decisão clínica.</footer>
+</div>
+<script>
+const $=s=>document.querySelector(s);const show=(e,on=true)=>e.classList.toggle('hidden',!on);
+let uploadedItems=[],detectedCases=[],pollTimer=null,currentBenchmark=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function selectedKind(){return document.querySelector('input[name=kind]:checked').value}
+async function readDirectory(reader){let all=[];for(;;){const batch=await new Promise((res,rej)=>reader.readEntries(res,rej));if(!batch.length)return all;all=all.concat(batch)}}
+async function entryFiles(entry,base,out){if(entry.isFile){await new Promise(res=>entry.file(f=>{out.push({file:f,rel:base+entry.name});res()}));return}
+  for(const child of await readDirectory(entry.createReader()))await entryFiles(child,base+entry.name+'/',out)}
+async function fromDrop(dt){const entries=[...(dt.items||[])].map(i=>i.webkitGetAsEntry?.()).filter(Boolean),out=[];
+  if(entries.length){for(const e of entries)await entryFiles(e,'',out);return out}return [...dt.files].map(f=>({file:f,rel:f.webkitRelativePath||f.name}))}
+function fromInput(input){return [...input.files].map(f=>({file:f,rel:f.webkitRelativePath||f.name}))}
+function inferLabel(name){const n=name.toLowerCase();if(/(^|[-_ ])(pos|positive|positivo|alterado|doente)([-_ ]|$)/.test(n))return'positive';
+  if(/(^|[-_ ])(neg|negative|negativo|normal|saudavel|saudável)([-_ ]|$)/.test(n))return'negative';return''}
+function detectDataset(items){
+  const split=items.map(x=>x.rel.replaceAll('\\','/').split('/').filter(Boolean));
+  if(!split.length)return[];const first=split[0][0],hasCommonRoot=split.every(p=>p[0]===first&&p.length>1);
+  const relative=split.map(p=>hasCommonRoot?p.slice(1):p);const canGroup=relative.every(p=>p.length>1);
+  const groups=new Map();relative.forEach((parts,index)=>{const id=canGroup?parts[0]:(hasCommonRoot?first:'exame-001');
+    if(!groups.has(id))groups.set(id,{id,label:inferLabel(id),file_indices:[]});groups.get(id).file_indices.push(index)});
+  return [...groups.values()]
+}
+function renderCases(){
+  const kind=selectedKind();if(kind!=='mixed')detectedCases.forEach(c=>c.label=kind);
+  const list=$('#caseList');list.innerHTML='<div class="case-row head"><span>#</span><span>Exame</span><span>Arquivos</span><span>Referência</span></div>';
+  detectedCases.forEach((c,i)=>{const row=document.createElement('div');row.className='case-row';
+    const select=kind==='mixed'?`<select data-index="${i}"><option value="">Selecione…</option><option value="positive" ${c.label==='positive'?'selected':''}>Positivo · alterado</option><option value="negative" ${c.label==='negative'?'selected':''}>Negativo · normal</option></select>`
+      :`<span class="status ${kind==='positive'?'s-bad':'s-ok'}">${kind==='positive'?'POSITIVO':'NEGATIVO'}</span>`;
+    row.innerHTML=`<span>${i+1}</span><span class="case-id" title="${esc(c.id)}">${esc(c.id)}</span><span>${c.file_indices.length}</span><span>${select}</span>`;list.appendChild(row)});
+  list.querySelectorAll('select').forEach(s=>s.onchange=()=>{detectedCases[+s.dataset.index].label=s.value;validate()});validate()
+}
+function validate(){const ok=$('#datasetName').value.trim()&&uploadedItems.length&&detectedCases.length&&detectedCases.every(c=>['positive','negative'].includes(c.label));$('#startBtn').disabled=!ok}
+function loadItems(items){uploadedItems=items.filter(x=>x.file.size>0);detectedCases=detectDataset(uploadedItems);
+  $('#caseCount').textContent=detectedCases.length;$('#fileCount').textContent=uploadedItems.length;show($('#detected'),true);show($('#clearBtn'),true);renderCases()}
+function clearDataset(){uploadedItems=[];detectedCases=[];$('#folderInput').value='';show($('#detected'),false);show($('#clearBtn'),false);validate()}
+document.querySelectorAll('input[name=kind]').forEach(r=>r.onchange=renderCases);$('#datasetName').oninput=validate;
+$('#drop').onclick=()=>$('#folderInput').click();$('#folderInput').onchange=e=>loadItems(fromInput(e.target));$('#clearBtn').onclick=clearDataset;
+['dragenter','dragover'].forEach(ev=>$('#drop').addEventListener(ev,e=>{e.preventDefault();$('#drop').classList.add('hot')}));
+['dragleave','drop'].forEach(ev=>$('#drop').addEventListener(ev,e=>{e.preventDefault();$('#drop').classList.remove('hot')}));
+$('#drop').addEventListener('drop',async e=>loadItems(await fromDrop(e.dataTransfer)));
+$('#startBtn').onclick=async()=>{
+  validate();if($('#startBtn').disabled)return;$('#startBtn').disabled=true;show($('#setupCard'),false);show($('#uploadCard'),false);show($('#progressCard'),true);
+  const manifest={dataset_name:$('#datasetName').value.trim(),dataset_kind:selectedKind(),cases:detectedCases};const fd=new FormData();
+  uploadedItems.forEach(x=>fd.append('files',x.file,x.file.name));fd.append('manifest',JSON.stringify(manifest));
+  try{const res=await fetch('/api/benchmarks',{method:'POST',body:fd});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Falha no envio.');
+    currentBenchmark=data.benchmark_id;$('#processed').textContent=`0 / ${data.total_cases}`;pollBenchmark()}
+  catch(e){renderError(e.message)}
+};
+function pollBenchmark(){clearInterval(pollTimer);pollTimer=setInterval(async()=>{try{const r=await fetch('/api/benchmarks/'+currentBenchmark);const s=await r.json();
+  $('#bar').style.width=(s.progress||2)+'%';$('#processed').textContent=`${s.processed} / ${s.total}`;$('#currentCase').textContent=s.current_case?`Processando ${s.current_case}`:'Finalizando relatório…';
+  if(s.state==='done'){clearInterval(pollTimer);renderReport(s.report)}else if(s.state==='failed'){clearInterval(pollTimer);renderError(s.error||'Benchmark não concluído.')}}catch{}} ,1500)}
+const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
+function metric(label,value,detail,cls=''){return`<div class="metric ${cls}"><div class="k">${label}</div><div class="v">${value}</div><div class="d">${detail}</div></div>`}
+function renderReport(report){show($('#progressCard'),false);const card=$('#reportCard');show(card,true);const m=report.metrics,cm=m.confusion_matrix;
+  const rows=report.cases.map(c=>{const state=c.status==='decisive'?(c.correct?'s-ok':'s-bad'):c.status==='inconclusive'?'s-inc':'s-bad';
+    const label=c.status==='failed'?'FALHA':c.status==='inconclusive'?'INCONCLUSIVO':c.correct?'CORRETO':'INCORRETO';return`<tr><td>${esc(c.case_id)}</td><td>${c.truth==='positive'?'Positivo':'Negativo'}</td><td>${esc(c.prediction||'—')}</td><td><span class="status ${state}">${label}</span></td><td>${esc(c.confidence||'—')}</td><td>${c.duration_seconds}s</td></tr>`}).join('');
+  card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · ${esc(report.model.model_version||report.model.model_id||'MedGemma')}</div></div>
+    <div class="download"><a href="/api/benchmarks/${currentBenchmark}/report.json">Baixar JSON</a><a href="/api/benchmarks/${currentBenchmark}/report.csv">Baixar CSV</a></div></div>
+    <div class="metrics">${metric('Acurácia',pct(m.accuracy),'respostas decisivas','primary-m')}${metric('Sensibilidade',pct(m.sensitivity),'detecção de positivos')}
+      ${metric('Especificidade',pct(m.specificity),'reconhecimento de negativos')}${metric('F1-score',pct(m.f1_score),'equilíbrio precisão/recall')}
+      ${metric('Precisão',pct(m.precision),'valor preditivo positivo')}${metric('Cobertura',pct(m.coverage_rate),`${m.decisive_cases} de ${m.total_cases} decisivos`,'good')}
+      ${metric('Inconclusivos',m.inconclusive_cases,pct(m.inconclusive_rate))}${metric('Falhas',m.failed_cases,pct(m.failure_rate))}</div>
+    <div class="split"><div class="card"><h3>Matriz de confusão</h3><div class="matrix"><div class="cell ok"><b>${cm.tp}</b><span>Verdadeiros positivos</span></div>
+      <div class="cell err"><b>${cm.fp}</b><span>Falsos positivos</span></div><div class="cell err"><b>${cm.fn}</b><span>Falsos negativos</span></div>
+      <div class="cell ok"><b>${cm.tn}</b><span>Verdadeiros negativos</span></div></div></div>
+      <div class="card results"><h3>Resultados por exame</h3><table><thead><tr><th>Exame</th><th>Referência</th><th>Predição</th><th>Resultado</th><th>Confiança</th><th>Tempo</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="note">A matriz e as métricas classificatórias usam apenas respostas POSITIVA/NEGATIVA. Cobertura, inconclusivos e falhas são mostrados separadamente para evitar viés por exclusão.</div>
+    <div class="actions"><button class="primary" onclick="location.reload()">Novo benchmark</button></div>`;
+}
+function renderError(message){clearInterval(pollTimer);show($('#progressCard'),false);const card=$('#reportCard');show(card,true);card.classList.add('error');
+  card.innerHTML=`<h3>Benchmark não concluído</h3><p>${esc(message)}</p><div class="note">Nenhuma métrica foi fabricada. Revise o dataset e a disponibilidade do backend.</div><div class="actions"><button class="primary" onclick="location.reload()">Tentar novamente</button></div>`}
+</script>
+</body>
+</html>

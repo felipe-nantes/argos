@@ -3,115 +3,90 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Triagem Hepática — MedGemma (Pesquisa)</title>
-<style>
-  :root{
-    --bg:#0b1220; --panel:#131c2e; --panel2:#182238; --line:#243149;
-    --ink:#e8edf6; --mut:#95a3bd; --acc:#5b9dff; --acc2:#3f7fe0;
-    --pos:#f2a33c; --neg:#39c07f; --inc:#8aa0c0; --warn:#e2b93b;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#16233d 0,var(--bg) 60%);
-    color:var(--ink);font:15px/1.5 system-ui,Segoe UI,Roboto,Arial,sans-serif;min-height:100vh}
-  .wrap{max-width:760px;margin:0 auto;padding:28px 20px 60px}
-  header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
-  .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--acc),#8b5bff);
-    display:grid;place-items:center;font-weight:800;color:#fff}
-  h1{font-size:19px;margin:0}
-  .sub{color:var(--mut);font-size:13px;margin:0}
-  .badges{display:flex;gap:8px;margin:14px 0 22px;flex-wrap:wrap}
-  .chip{font-size:12px;padding:5px 10px;border-radius:999px;border:1px solid var(--line);
-    background:var(--panel);color:var(--mut)}
-  .chip b{color:var(--ink)}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
-  .drop{border:2px dashed var(--line);border-radius:14px;padding:40px 20px;text-align:center;
-    cursor:pointer;transition:.15s;background:var(--panel2)}
-  .drop:hover,.drop.hot{border-color:var(--acc);background:#1b2740}
-  .drop .big{font-size:16px;font-weight:600}
-  .drop .small{color:var(--mut);font-size:13px;margin-top:6px}
-  .btns{display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap}
-  button{font:inherit;border:0;border-radius:10px;padding:11px 18px;cursor:pointer;font-weight:600}
-  .primary{background:var(--acc);color:#fff}.primary:hover{background:var(--acc2)}
-  .ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
-  .hidden{display:none}
-  .prog{height:10px;border-radius:999px;background:#0e1626;overflow:hidden;border:1px solid var(--line)}
-  .bar{height:100%;width:5%;background:linear-gradient(90deg,var(--acc),#8b5bff);transition:width .5s}
-  .step{margin-top:14px;color:var(--mut);font-size:14px;display:flex;align-items:center;gap:10px}
-  .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;
-    animation:sp 1s linear infinite}
-  @keyframes sp{to{transform:rotate(360deg)}}
-  .verdict{display:flex;align-items:center;gap:14px;margin-bottom:4px}
-  .vbadge{font-size:15px;font-weight:800;letter-spacing:.5px;padding:8px 14px;border-radius:10px}
-  .v-POSITIVA{background:rgba(242,163,60,.15);color:var(--pos);border:1px solid rgba(242,163,60,.4)}
-  .v-NEGATIVA{background:rgba(57,192,127,.13);color:var(--neg);border:1px solid rgba(57,192,127,.4)}
-  .v-INCONCLUSIVA{background:rgba(138,160,192,.13);color:var(--inc);border:1px solid rgba(138,160,192,.4)}
-  .v-FALHA{background:rgba(226,185,59,.12);color:var(--warn);border:1px solid rgba(226,185,59,.4)}
-  h2{font-size:16px;margin:18px 0 6px}
-  .field{margin-top:12px}
-  .field .k{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px}
-  .field .v{margin-top:3px}
-  ul{margin:6px 0 0;padding-left:18px}li{margin:2px 0}
-  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .conf{font-weight:700;text-transform:capitalize}
-  .note{margin-top:20px;padding:12px 14px;border-radius:10px;background:#0e1626;border:1px solid var(--line);
-    color:var(--mut);font-size:12.5px}
-  .err-ico{font-size:30px}
-  footer{color:var(--mut);font-size:12px;text-align:center;margin-top:26px}
-  a{color:var(--acc)}
-</style>
+<title>Argos — Análise hepática assistida</title>
+<link rel="stylesheet" href="/argos.css" />
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="logo">DT</div>
-    <div>
-      <h1>Triagem visual hepática — MedGemma</h1>
-      <p class="sub">Digital Twin Cirúrgico · UEM · GETS · HU</p>
+<div class="app-shell">
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3.2 12s3.2-5.2 8.8-5.2S20.8 12 20.8 12 17.6 17.2 12 17.2 3.2 12 3.2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>
+      </div>
+      <div><p class="brand-name">Argos</p><p class="brand-subtitle">Digital Twin Cirúrgico · UEM · GETS · HU</p></div>
     </div>
+    <nav class="app-nav" aria-label="Navegação principal">
+      <a class="active" href="/">Exame individual</a>
+      <a href="/benchmark.html">Benchmark</a>
+    </nav>
+    <div class="header-context"><span class="research-pill">Modo Pesquisa</span></div>
   </header>
 
-  <div class="badges">
-    <span class="chip">Modo <b>Pesquisa</b></span>
-    <span class="chip" id="backendChip"><span class="dot" style="background:#666"></span>MedGemma: <b id="backendState">verificando…</b></span>
-    <span class="chip">Revisão humana <b>obrigatória</b></span>
-  </div>
+  <main class="page">
+    <section class="page-hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Inteligência visual hepática</div>
+        <h1 class="page-title">Análise médica mais clara, do exame ao modelo.</h1>
+        <p class="page-lead">Envie uma ressonância magnética para segmentação do fígado, triagem visual assistida por MedGemma e revisão humana do modelo 3D.</p>
+        <div class="status-row">
+          <span class="chip">Ambiente <b>local e seguro</b></span>
+          <span class="chip" id="backendChip"><span class="dot" style="background:#8da099"></span>MedGemma: <b id="backendState">verificando…</b></span>
+          <span class="chip">Revisão humana <b>obrigatória</b></span>
+        </div>
+      </div>
+    </section>
 
-  <!-- UPLOAD -->
-  <div class="card" id="uploadCard">
-    <div class="drop" id="drop">
-      <div class="big">Arraste a pasta do exame de RM aqui</div>
-      <div class="small">ou clique para selecionar — arquivos DICOM (a pasta pode ter vários arquivos)</div>
+    <div class="analysis-grid">
+      <section class="analysis-workspace">
+        <div class="card" id="uploadCard">
+          <div class="section-heading">
+            <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 17.5V6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h6A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2h-11A2.5 2.5 0 0 1 4 17.5Z" stroke="currentColor" stroke-width="1.7"/><path d="m9 13 3-3 3 3M12 10v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <div><h2>Novo exame</h2><p>Selecione uma pasta ou os arquivos DICOM da ressonância.</p></div>
+          </div>
+          <div class="drop" id="drop">
+            <div class="drop-content">
+              <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <div class="big">Arraste a pasta do exame de RM aqui</div>
+              <div class="small">Arquivos DICOM de uma série ou exame multi-frame</div>
+            </div>
+          </div>
+          <div class="btns">
+            <button class="primary" id="pickFolder">Selecionar pasta</button>
+            <button class="ghost" id="pickFiles">Selecionar arquivos</button>
+          </div>
+          <input id="folderInput" type="file" webkitdirectory directory multiple class="hidden" />
+          <input id="fileInput" type="file" multiple class="hidden" />
+          <div class="note">O envio é processado localmente. O exame é des-identificado automaticamente e nenhum dado sai desta máquina.</div>
+        </div>
+
+        <div class="card hidden" id="progCard">
+          <div class="section-heading">
+            <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3a9 9 0 1 0 9 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <div><h2>Processando exame</h2><p>O Argos está preparando a análise e o modelo.</p></div>
+          </div>
+          <div class="prog"><div class="bar" id="bar"></div></div>
+          <div class="step"><div class="spin"></div><span id="stepLabel">Enviando…</span></div>
+          <div class="note">Leitura, des-identificação, segmentação do fígado e análise MedGemma podem levar alguns minutos.</div>
+        </div>
+
+        <div class="card hidden" id="resultCard"></div>
+        <div class="btns hidden" id="againBtns"><button class="primary" id="again">Nova análise</button></div>
+      </section>
+
+      <aside class="card clinical-context">
+        <div class="context-label">Fluxo assistido</div>
+        <h2 class="context-title">Do DICOM à revisão</h2>
+        <p class="context-copy">Cada etapa mantém rastreabilidade e exige validação humana.</p>
+        <div class="context-list">
+          <div class="context-item"><svg viewBox="0 0 24 24" fill="none"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><div><b>RM em DICOM</b><span>Entrada des-identificada</span></div></div>
+          <div class="context-item"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/></svg><div><b>Triagem MedGemma</b><span>Hipótese visual exploratória</span></div></div>
+          <div class="context-item"><svg viewBox="0 0 24 24" fill="none"><path d="m4 12 5 5L20 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>Revisão humana</b><span>Obrigatória em todo resultado</span></div></div>
+        </div>
+      </aside>
     </div>
-    <div class="btns">
-      <button class="primary" id="pickFolder">Selecionar pasta</button>
-      <button class="ghost" id="pickFiles">Selecionar arquivos</button>
-    </div>
-    <input id="folderInput" type="file" webkitdirectory directory multiple class="hidden" />
-    <input id="fileInput" type="file" multiple class="hidden" />
-    <div class="note">O envio é processado localmente. O exame é des-identificado automaticamente
-      e nenhum dado sai desta máquina. Você recebe apenas o relatório final.</div>
-  </div>
+  </main>
 
-  <!-- PROGRESS -->
-  <div class="card hidden" id="progCard">
-    <div class="prog"><div class="bar" id="bar"></div></div>
-    <div class="step"><div class="spin"></div><span id="stepLabel">Enviando…</span></div>
-    <div class="note">Processando: leitura, des-identificação, segmentação do fígado e análise MedGemma —
-      tudo automático. Isso pode levar de alguns segundos a alguns minutos.</div>
-  </div>
-
-  <!-- RESULT -->
-  <div class="card hidden" id="resultCard"></div>
-
-  <div class="btns hidden" id="againBtns">
-    <button class="primary" id="again">Nova análise</button>
-  </div>
-
-  <footer>
-    Hipótese visual exploratória em modo Pesquisa. Não é diagnóstico, não é laudo médico e não
-    substitui a avaliação de radiologista, cirurgião ou médico pesquisador.
-  </footer>
+  <footer>Hipótese visual exploratória em modo Pesquisa. Não é diagnóstico, não é laudo médico e não substitui avaliação especializada.</footer>
 </div>
 
 <script>
@@ -120,6 +95,8 @@ const show = (el,on)=>el.classList.toggle('hidden',!on);
 const STEP_LABELS = {recebendo:'Recebendo exame',ingestao:'Lendo e des-identificando o exame',
   segmentacao:'Segmentando o fígado',montagem:'Preparando a análise',
   medgemma:'Analisando com MedGemma',concluido:'Concluído'};
+
+STEP_LABELS.modelo_3d='Gerando modelo 3D do fígado';
 
 async function refreshBackend(){
   try{
@@ -209,6 +186,14 @@ function renderResult(result){
   meta.appendChild(el('span','chip','Status: <b>revisão humana obrigatória</b>'));
   c.appendChild(meta);
   c.appendChild(el('div','note', escapeHtml(result.disclaimer||'')));
+  if(result.viewer_ready && result.viewer_url){
+    const actions=el('div','btns');
+    const open=el('button','primary','Visualizar fígado em 3D e revisar');
+    open.onclick=()=>{ window.location.href=result.viewer_url; };
+    actions.appendChild(open); c.appendChild(actions);
+  }else{
+    c.appendChild(el('div','note','O relatório foi concluído, mas o modelo 3D não ficou disponível nesta execução.'));
+  }
 }
 function renderGraceful(r){
   show($('#progCard'),false); show($('#againBtns'),true); show($('#resultCard'),true);

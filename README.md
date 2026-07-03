@@ -187,12 +187,20 @@ pipeline não fabrica nada).
 - **Backend MedGemma local:** `tools/start_medgemma.ps1` inicia o 4B quantizado
   após autenticação/licença no Hugging Face; `tools/stop_medgemma.ps1` encerra.
 - **Webapp de demonstração (localhost):** `webapp/` — o usuário arrasta a pasta
-  DICOM de RM e recebe só o relatório MedGemma; todo o pipeline (des-identificação,
+  DICOM de RM e recebe o relatório MedGemma e o modelo 3D revisável; todo o
+  pipeline (des-identificação,
   segmentação, montagem, inferência) roda escondido, em subprocessos isolados e
   "à prova de falhas". Suba com o MedGemma ativo e rode
   `.venv\Scripts\python.exe -m uvicorn webapp.server:app --port 8000`, depois abra
   `http://127.0.0.1:8000`. Se qualquer etapa falhar, o app mostra um cartão honesto
-  ("análise não concluída") — nunca um achado clínico fabricado.
+  ("análise não concluída") — nunca um achado clínico fabricado. Quando o
+  relatório termina, o mesmo job gera o STL do fígado segmentado e oferece o
+  botão **Visualizar fígado em 3D e revisar**; a decisão humana fica registrada
+  em `outputs/approval.json`.
+- **Benchmark pelo frontend:** `http://127.0.0.1:8080/benchmark.html` recebe um
+  dataset organizado com uma subpasta por exame, aceita referência positiva,
+  negativa ou mista e gera matriz de confusão, sensibilidade, especificidade,
+  precisão, F1, acurácia, cobertura e relatórios JSON/CSV.
 
 ### Fora do escopo do MVP
 

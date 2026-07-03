@@ -29,3 +29,9 @@ http://localhost:8000/viewer/index.html?case=../casos/sintetico/outputs
 
 Controles: orbitar (arrastar), zoom (scroll), alternar visibilidade e opacidade de
 órgão/lesão no painel à direita.
+
+## Revisão integrada ao webapp
+
+Quando aberto pelo botão do webapp, o viewer recebe também `?job=<id>` e mostra
+as ações **Aprovar segmentação** e **Solicitar revisão**. A decisão é enviada ao
+backend local e persistida no caso como `outputs/approval.json`.

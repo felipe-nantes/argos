@@ -1,0 +1,27 @@
+# =====================================================================
+# Normalização cross-platform (Windows <-> macOS)
+# ---------------------------------------------------------------------
+# Guarda TUDO que é texto como LF no repositório E no working tree das
+# duas máquinas. Elimina o clássico "o arquivo inteiro mudou" por causa
+# de CRLF/LF ao editar no Windows e rodar no MAC. Combine com:
+#   git config core.autocrlf false   (feito no setup deste repo)
+# =====================================================================
+* text=auto eol=lf
+
+# --- Binários: nunca tocar em fim de linha ---------------------------
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.nii   binary
+*.nii.gz binary
+*.stl   binary
+*.vtp   binary
+*.dcm   binary
+*.ima   binary
+*.woff  binary
+*.woff2 binary

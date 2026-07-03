@@ -18,6 +18,8 @@ o uso clínico exige a revisão humana real do painel.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import os
@@ -26,13 +28,20 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.request import urlopen
 
+import pydicom
 import SimpleITK as sitk
+import yaml
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("dtwin.webapp")
@@ -40,6 +49,7 @@ log = logging.getLogger("dtwin.webapp")
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 STATIC = ROOT / "static"
+VIEWER = REPO / "viewer"
 WORKSPACE = Path("casos/webapp")
 PROFILE = "profiles/figado.yaml"
 MEDGEMMA_CONFIG = os.environ.get("WEBAPP_MEDGEMMA_CONFIG", "configs/medgemma_local_4b.yaml")
@@ -48,6 +58,7 @@ MIN_SLICES = 3
 PREP_TIMEOUT_GPU = int(os.environ.get("WEBAPP_PREP_TIMEOUT_GPU", "900"))
 PREP_TIMEOUT_CPU = int(os.environ.get("WEBAPP_PREP_TIMEOUT_CPU", "2400"))
 SCREEN_TIMEOUT = int(os.environ.get("WEBAPP_SCREEN_TIMEOUT", "600"))
+MODEL_TIMEOUT = int(os.environ.get("WEBAPP_MODEL_TIMEOUT", "300"))
 DISCLAIMER = (
     "Uso em pesquisa. Não destinado à decisão clínica. Não é diagnóstico nem "
     "laudo médico. Revisão médica obrigatória."
@@ -70,6 +81,7 @@ def _install_seg_launcher() -> None:
 
 
 _jobs: dict[str, dict] = {}
+_benchmarks: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
@@ -77,6 +89,12 @@ def _set(job_id: str, **kw) -> None:
     with _lock:
         if job_id in _jobs:
             _jobs[job_id].update(**kw)
+
+
+def _set_benchmark(benchmark_id: str, **kw) -> None:
+    with _lock:
+        if benchmark_id in _benchmarks:
+            _benchmarks[benchmark_id].update(**kw)
 
 
 def _graceful(motivo: str, detalhe: str = "") -> dict:
@@ -111,15 +129,48 @@ def _friendly(err: Exception) -> str:  # conveniência p/ testes
     return _friendly_text(str(err))
 
 
+def _expected_modalities() -> set[str]:
+    """Modalidades aceitas pelo perfil ativo (ex.: {'MR','MRI'} para o fígado)."""
+    try:
+        prof = yaml.safe_load((REPO / PROFILE).read_text("utf-8")) or {}
+        return {str(m).upper() for m in (prof.get("modalidade") or [])}
+    except Exception:  # noqa: BLE001
+        return {"MR", "MRI"}
+
+
+def _modality_of(names: list[str]) -> str:
+    """Lê a Modality (0008,0060) do primeiro arquivo legível da série."""
+    for name in names[:5]:
+        try:
+            ds = pydicom.dcmread(name, stop_before_pixels=True, force=True)
+        except Exception:  # noqa: BLE001
+            continue
+        modality = str(getattr(ds, "Modality", "") or "").upper()
+        if modality:
+            return modality
+    return ""
+
+
+def _modality_ok(names: list[str], expected: set[str]) -> bool:
+    """Aceita se a modalidade bate com o perfil (ou é desconhecida — o gate do
+    stage1 decide). REJEITA modalidade conhecida e incompatível (ex.: CT quando o
+    perfil é MR), para não escolher a série errada num envio misto CT+MR."""
+    modality = _modality_of(names)
+    return not modality or not expected or modality in expected
+
+
 def find_best_series(root: Path) -> tuple[list[str], int]:
-    """Acha a maior série DICOM em QUALQUER estrutura de pastas, robustamente:
+    """Acha a maior série DICOM COMPATÍVEL com o perfil, em qualquer estrutura:
 
     1) enumera TODAS as séries de cada diretório (uma pasta pode ter várias séries);
-    2) se nenhuma série multi-arquivo servir, tenta um único DICOM **multi-frame**
+    2) filtra por modalidade (o perfil do fígado é MR): num envio misto CT+MR,
+       ignora as séries CT em vez de escolher a maior e abortar no gate do stage1;
+    3) se nenhuma série multi-arquivo servir, tenta um único DICOM **multi-frame**
        (um só `.dcm` que já é o volume 3D inteiro), medindo a profundidade real.
 
     Retorna (lista_de_arquivos_da_melhor_série, nº_de_cortes)."""
     reader = sitk.ImageSeriesReader()
+    expected = _expected_modalities()
     best_files: list[str] = []
     for dirpath, _dirs, _files in os.walk(root):
         try:
@@ -132,8 +183,11 @@ def find_best_series(root: Path) -> tuple[list[str], int]:
                          else reader.GetGDCMSeriesFileNames(dirpath))
             except Exception:  # noqa: BLE001
                 names = []
-            if len(names) > len(best_files):
-                best_files = list(names)
+            if len(names) <= len(best_files):
+                continue
+            if not _modality_ok(list(names), expected):
+                continue
+            best_files = list(names)
     if len(best_files) >= MIN_SLICES:
         return best_files, len(best_files)
 
@@ -147,8 +201,9 @@ def find_best_series(root: Path) -> tuple[list[str], int]:
             except Exception:  # noqa: BLE001
                 continue
             depth = img.GetSize()[2] if img.GetDimension() >= 3 else 1
-            if depth > best_depth:
-                best_file, best_depth = path, depth
+            if depth <= best_depth or not _modality_ok([path], expected):
+                continue
+            best_file, best_depth = path, depth
     if best_file and best_depth >= MIN_SLICES:
         return [best_file], best_depth
     return best_files, len(best_files)
@@ -191,6 +246,21 @@ def _success_result(report: dict) -> dict:
     return {**report, "status": "concluido"}
 
 
+def _viewer_result(report: dict, job_id: str, viewer_ready: bool) -> dict:
+    """Acrescenta a visualizacao sem alterar o contrato do relatorio MedGemma."""
+    result = _success_result(report)
+    result.update(
+        viewer_ready=bool(viewer_ready),
+        viewer_url=(
+            f"/viewer/index.html?case=/api/jobs/{job_id}/model&job={job_id}"
+            if viewer_ready
+            else None
+        ),
+        approval={"status": "pending"} if viewer_ready else None,
+    )
+    return result
+
+
 def _load_report(path: Path) -> dict | None:
     """Relatório válido = sucesso, independentemente do returncode do subprocesso.
     run_screening grava o JSON atomicamente só após validá-lo, então a existência de
@@ -205,6 +275,53 @@ def _load_report(path: Path) -> dict | None:
     if not isinstance(report, dict) or not report.get("resultado_hipotese"):
         return None
     return data
+
+
+def _model_done(case_dir: Path) -> bool:
+    """Modelo publicavel = manifesto valido e todos os STLs presentes."""
+    manifest_path = case_dir / "outputs" / "viewer_manifest.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text("utf-8"))
+        meshes = manifest.get("meshes", [])
+        return bool(meshes) and all(
+            isinstance(item, dict)
+            and Path(str(item.get("stl", ""))).name == item.get("stl")
+            and (manifest_path.parent / item["stl"]).is_file()
+            for item in meshes
+        )
+    except (OSError, json.JSONDecodeError, TypeError, KeyError):
+        return False
+
+
+def _build_model(case_dir: Path) -> tuple[bool, str]:
+    """Gera a malha do figado em subprocesso, sem inventar uma lesao."""
+    proc = _run(
+        [
+            PY,
+            "digital_twin.py",
+            "finalize",
+            str(case_dir),
+            "--profile",
+            PROFILE,
+            "--no-lesion",
+        ],
+        timeout=MODEL_TIMEOUT,
+    )
+    if _model_done(case_dir):
+        return True, ""
+    return False, _cli_reason(proc)
+
+
+def _case_dir_for_job(job_id: str) -> Path:
+    if not job_id or any(ch not in "0123456789abcdef" for ch in job_id.lower()):
+        raise HTTPException(status_code=404, detail="Job nao encontrado.")
+    return (WORKSPACE / job_id / "case").resolve()
+
+
+class ApprovalPayload(BaseModel):
+    status: Literal["approved", "revision_requested"]
 
 
 def process_job(job_id: str, raw_dir: Path) -> None:
@@ -254,8 +371,20 @@ def process_job(job_id: str, raw_dir: Path) -> None:
             reason = _cli_reason(scr)
             _set(job_id, state="done", result=_graceful(_friendly_text(reason), reason))
             return
-        _set(job_id, state="done", step="concluido", progress=100,
-             result=_success_result(report))
+        # Fase 3: mascara hepatica -> malha/STL para revisao humana.
+        _set(job_id, step="modelo_3d", progress=92)
+        viewer_ready, viewer_error = _build_model(case_dir)
+        if not viewer_ready:
+            log.warning("Job %s: relatorio concluido, mas modelo 3D falhou: %s", job_id, viewer_error)
+        _set(
+            job_id,
+            state="done",
+            step="concluido",
+            progress=100,
+            viewer_error=viewer_error or None,
+            approval={"status": "pending"} if viewer_ready else None,
+            result=_viewer_result(report, job_id, viewer_ready),
+        )
     except subprocess.TimeoutExpired:
         _set(job_id, state="done", result=_graceful(
             "O processamento excedeu o tempo limite.", "timeout"))
@@ -266,6 +395,266 @@ def process_job(job_id: str, raw_dir: Path) -> None:
     finally:
         shutil.rmtree(raw_dir, ignore_errors=True)
         shutil.rmtree(WORKSPACE / job_id / "_series", ignore_errors=True)
+
+
+def calculate_benchmark_metrics(results: list[dict]) -> dict:
+    """Calcula métricas somente sobre respostas classificatórias válidas.
+
+    Falhas de pipeline e respostas INCONCLUSIVA ficam fora da matriz de confusão,
+    mas aparecem explicitamente nas taxas de conclusão e cobertura. Isso evita
+    melhorar artificialmente uma métrica escondendo exames que não foram avaliados.
+    """
+    total = len(results)
+    reports = [r for r in results if r.get("status") in {"decisive", "inconclusive"}]
+    decisive = [r for r in results if r.get("status") == "decisive"]
+    tp = sum(r.get("truth") == "positive" and r.get("prediction") == "POSITIVA" for r in decisive)
+    tn = sum(r.get("truth") == "negative" and r.get("prediction") == "NEGATIVA" for r in decisive)
+    fp = sum(r.get("truth") == "negative" and r.get("prediction") == "POSITIVA" for r in decisive)
+    fn = sum(r.get("truth") == "positive" and r.get("prediction") == "NEGATIVA" for r in decisive)
+    inconclusive = sum(r.get("status") == "inconclusive" for r in results)
+    failed = sum(r.get("status") == "failed" for r in results)
+
+    def ratio(num: int, den: int) -> float | None:
+        return round(num / den, 4) if den else None
+
+    return {
+        "total_cases": total,
+        "completed_reports": len(reports),
+        "decisive_cases": len(decisive),
+        "inconclusive_cases": inconclusive,
+        "failed_cases": failed,
+        "completion_rate": ratio(len(reports), total),
+        "coverage_rate": ratio(len(decisive), total),
+        "inconclusive_rate": ratio(inconclusive, total),
+        "failure_rate": ratio(failed, total),
+        "confusion_matrix": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
+        "accuracy": ratio(tp + tn, tp + tn + fp + fn),
+        "sensitivity": ratio(tp, tp + fn),
+        "specificity": ratio(tn, tn + fp),
+        "precision": ratio(tp, tp + fp),
+        "f1_score": ratio(2 * tp, 2 * tp + fp + fn),
+    }
+
+
+def _benchmark_model_info() -> dict:
+    try:
+        config = yaml.safe_load((REPO / MEDGEMMA_CONFIG).read_text("utf-8")) or {}
+        model = config.get("medgemma_screening", {}).get("medgemma", {})
+        return {
+            "model_id": model.get("model_id"),
+            "model_version": model.get("model_version"),
+            "model_parameter_scale": model.get("model_parameter_scale"),
+            "config": MEDGEMMA_CONFIG,
+        }
+    except Exception:  # noqa: BLE001
+        return {"model_id": None, "model_version": None, "config": MEDGEMMA_CONFIG}
+
+
+def _run_benchmark_case(
+    benchmark_id: str,
+    index: int,
+    item: dict,
+    raw_case_dir: Path,
+) -> dict:
+    """Executa segmentação + triagem para um exame, sem gerar a malha 3D."""
+    benchmark_root = WORKSPACE / "benchmarks" / benchmark_id
+    case_dir = benchmark_root / "cases" / f"{index:04d}"
+    series_dir = benchmark_root / "_series" / f"{index:04d}"
+    started = time.monotonic()
+    base = {
+        "case_id": item["id"],
+        "truth": item["label"],
+        "prediction": None,
+        "confidence": None,
+        "correct": None,
+        "status": "failed",
+        "error": None,
+    }
+    try:
+        best_files, n = find_best_series(raw_case_dir)
+        if not best_files or n < MIN_SLICES:
+            base["error"] = "Nenhuma série DICOM de RM válida foi encontrada."
+            return base
+
+        series_dir.mkdir(parents=True, exist_ok=True)
+        for file_index, source in enumerate(best_files):
+            shutil.copyfile(source, series_dir / f"{file_index:05d}_{os.path.basename(source)}")
+
+        prep = _segment(str(series_dir.resolve()), case_dir, "gpu", PREP_TIMEOUT_GPU)
+        if not _seg_done(case_dir):
+            reason = _cli_reason(prep)
+            log.warning("Benchmark %s/%s: GPU falhou (%s); tentando CPU", benchmark_id, item["id"], reason[:100])
+            shutil.rmtree(case_dir, ignore_errors=True)
+            prep = _segment(str(series_dir.resolve()), case_dir, "cpu", PREP_TIMEOUT_CPU)
+            if not _seg_done(case_dir):
+                base["error"] = _friendly_text(_cli_reason(prep))
+                return base
+
+        screening = _run(
+            [
+                PY,
+                "-m",
+                "dtwin.medgemma_screening",
+                "--case-dir",
+                str(case_dir),
+                "--medgemma-config",
+                MEDGEMMA_CONFIG,
+                "--confirm-no-visible-phi",
+            ],
+            timeout=SCREEN_TIMEOUT,
+        )
+        envelope = _load_report(case_dir / "outputs" / "medgemma" / "medgemma_report.json")
+        if envelope is None:
+            base["error"] = _friendly_text(_cli_reason(screening))
+            return base
+
+        report = envelope["report"]
+        prediction = str(report.get("resultado_hipotese", "")).upper()
+        if prediction not in {"POSITIVA", "NEGATIVA", "INCONCLUSIVA"}:
+            base["error"] = "O relatório retornou uma classificação inválida."
+            return base
+        expected = "POSITIVA" if item["label"] == "positive" else "NEGATIVA"
+        base.update(
+            prediction=prediction,
+            confidence=report.get("confianca"),
+            correct=(prediction == expected) if prediction != "INCONCLUSIVA" else None,
+            status="inconclusive" if prediction == "INCONCLUSIVA" else "decisive",
+            report_summary=report.get("resumo_do_achado"),
+        )
+        return base
+    except subprocess.TimeoutExpired:
+        base["error"] = "O processamento excedeu o tempo limite."
+        return base
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Benchmark %s/%s: falha inesperada", benchmark_id, item["id"])
+        base["error"] = f"Falha inesperada: {type(exc).__name__}"
+        return base
+    finally:
+        base["duration_seconds"] = round(time.monotonic() - started, 2)
+        shutil.rmtree(series_dir, ignore_errors=True)
+
+
+def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
+    benchmark_root = WORKSPACE / "benchmarks" / benchmark_id
+    cases = manifest["cases"]
+    started_at = datetime.now(timezone.utc).isoformat()
+    results: list[dict] = []
+    try:
+        _set_benchmark(benchmark_id, state="processing", started_at=started_at)
+        for index, item in enumerate(cases, start=1):
+            progress = 5 + int(((index - 1) / max(len(cases), 1)) * 90)
+            _set_benchmark(
+                benchmark_id,
+                current_case=item["id"],
+                processed=index - 1,
+                progress=progress,
+            )
+            results.append(
+                _run_benchmark_case(benchmark_id, index, item, raw_dir / f"{index:04d}")
+            )
+            _set_benchmark(benchmark_id, processed=index, progress=5 + int(index / len(cases) * 90))
+
+        report = {
+            "schema_version": 1,
+            "benchmark_id": benchmark_id,
+            "dataset_name": manifest["dataset_name"],
+            "dataset_kind": manifest["dataset_kind"],
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "model": _benchmark_model_info(),
+            "metrics": calculate_benchmark_metrics(results),
+            "cases": results,
+            "disclaimer": DISCLAIMER,
+        }
+        benchmark_root.mkdir(parents=True, exist_ok=True)
+        report_path = benchmark_root / "benchmark_report.json"
+        temp = benchmark_root / ".benchmark_report.json.tmp"
+        temp.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp.replace(report_path)
+        _set_benchmark(
+            benchmark_id,
+            state="done",
+            current_case=None,
+            processed=len(cases),
+            progress=100,
+            report=report,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Benchmark %s: falha inesperada", benchmark_id)
+        _set_benchmark(
+            benchmark_id,
+            state="failed",
+            progress=100,
+            error=f"Não foi possível concluir o benchmark: {type(exc).__name__}",
+        )
+    finally:
+        shutil.rmtree(raw_dir, ignore_errors=True)
+
+
+def _parse_benchmark_manifest(raw: str, file_count: int) -> dict:
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Manifesto do benchmark inválido.") from exc
+    if not isinstance(manifest, dict):
+        raise HTTPException(status_code=400, detail="Manifesto do benchmark inválido.")
+    dataset_name = str(manifest.get("dataset_name") or "").strip()[:120]
+    dataset_kind = manifest.get("dataset_kind")
+    cases = manifest.get("cases")
+    if not dataset_name:
+        raise HTTPException(status_code=400, detail="Informe o nome do dataset.")
+    if dataset_kind not in {"positive", "negative", "mixed"}:
+        raise HTTPException(status_code=400, detail="Tipo de dataset inválido.")
+    if not isinstance(cases, list) or not cases:
+        raise HTTPException(status_code=400, detail="Nenhum exame foi identificado no dataset.")
+
+    seen_ids: set[str] = set()
+    seen_files: set[int] = set()
+    normalized = []
+    for case in cases:
+        if not isinstance(case, dict):
+            raise HTTPException(status_code=400, detail="Definição de exame inválida.")
+        case_id = str(case.get("id") or "").strip()[:120]
+        label = case.get("label")
+        indices = case.get("file_indices")
+        if not case_id or case_id in seen_ids:
+            raise HTTPException(status_code=400, detail="Os exames precisam de identificadores únicos.")
+        if label not in {"positive", "negative"}:
+            raise HTTPException(status_code=400, detail=f"Rótulo inválido no exame {case_id}.")
+        if dataset_kind in {"positive", "negative"} and label != dataset_kind:
+            raise HTTPException(
+                status_code=400,
+                detail=f"O rótulo do exame {case_id} não corresponde ao tipo do dataset.",
+            )
+        if not isinstance(indices, list) or not indices:
+            raise HTTPException(status_code=400, detail=f"O exame {case_id} não contém arquivos.")
+        clean_indices = []
+        for value in indices:
+            if not isinstance(value, int) or value < 0 or value >= file_count or value in seen_files:
+                raise HTTPException(status_code=400, detail="Mapeamento de arquivos do benchmark inválido.")
+            seen_files.add(value)
+            clean_indices.append(value)
+        seen_ids.add(case_id)
+        normalized.append({"id": case_id, "label": label, "file_indices": clean_indices})
+    if seen_files != set(range(file_count)):
+        raise HTTPException(status_code=400, detail="Todos os arquivos devem pertencer a um exame.")
+    return {"dataset_name": dataset_name, "dataset_kind": dataset_kind, "cases": normalized}
+
+
+def _benchmark_csv(report: dict) -> str:
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow([
+        "case_id", "truth", "prediction", "status", "correct", "confidence",
+        "duration_seconds", "error",
+    ])
+    for item in report.get("cases", []):
+        writer.writerow([
+            item.get("case_id"), item.get("truth"), item.get("prediction"),
+            item.get("status"), item.get("correct"), item.get("confidence"),
+            item.get("duration_seconds"), item.get("error"),
+        ])
+    return stream.getvalue()
 
 
 app = FastAPI(title="Digital Twin — Triagem MedGemma (demo, modo Pesquisa)")
@@ -319,11 +708,145 @@ def status(job_id: str) -> dict:
         "step": job["step"],
         "progress": job["progress"],
         "result": job["result"] if job["state"] == "done" else None,
+        "approval": job.get("approval"),
     }
+
+
+@app.post("/api/benchmarks")
+async def create_benchmark(files: list[UploadFile] = File(...), manifest: str = Form(...)) -> dict:
+    if not files:
+        raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
+    parsed = _parse_benchmark_manifest(manifest, len(files))
+    benchmark_id = uuid.uuid4().hex[:12]
+    raw_dir = WORKSPACE / "benchmarks" / benchmark_id / "_upload"
+    try:
+        for case_index, item in enumerate(parsed["cases"], start=1):
+            case_upload = raw_dir / f"{case_index:04d}"
+            case_upload.mkdir(parents=True, exist_ok=True)
+            for local_index, file_index in enumerate(item["file_indices"]):
+                upload = files[file_index]
+                original_name = Path(upload.filename or f"file_{file_index}").name
+                destination = case_upload / f"{local_index:06d}_{original_name}"
+                destination.write_bytes(await upload.read())
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(raw_dir.parent, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="Falha ao receber os arquivos do dataset.") from exc
+
+    with _lock:
+        _benchmarks[benchmark_id] = {
+            "state": "queued",
+            "progress": 2,
+            "processed": 0,
+            "total": len(parsed["cases"]),
+            "current_case": None,
+            "report": None,
+            "error": None,
+        }
+    threading.Thread(
+        target=process_benchmark,
+        args=(benchmark_id, parsed, raw_dir),
+        daemon=True,
+    ).start()
+    return {"benchmark_id": benchmark_id, "total_cases": len(parsed["cases"])}
+
+
+@app.get("/api/benchmarks/{benchmark_id}")
+def benchmark_status(benchmark_id: str) -> dict:
+    with _lock:
+        benchmark = _benchmarks.get(benchmark_id)
+    if not benchmark:
+        raise HTTPException(status_code=404, detail="Benchmark não encontrado.")
+    return {
+        "state": benchmark["state"],
+        "progress": benchmark["progress"],
+        "processed": benchmark["processed"],
+        "total": benchmark["total"],
+        "current_case": benchmark.get("current_case"),
+        "report": benchmark.get("report") if benchmark["state"] == "done" else None,
+        "error": benchmark.get("error"),
+    }
+
+
+@app.get("/api/benchmarks/{benchmark_id}/report.json")
+def benchmark_report_json(benchmark_id: str):
+    if not benchmark_id or any(ch not in "0123456789abcdef" for ch in benchmark_id.lower()):
+        raise HTTPException(status_code=404, detail="Benchmark não encontrado.")
+    path = WORKSPACE / "benchmarks" / benchmark_id / "benchmark_report.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Relatório ainda não disponível.")
+    return FileResponse(path, media_type="application/json", filename=f"benchmark-{benchmark_id}.json")
+
+
+@app.get("/api/benchmarks/{benchmark_id}/report.csv")
+def benchmark_report_csv(benchmark_id: str):
+    if not benchmark_id or any(ch not in "0123456789abcdef" for ch in benchmark_id.lower()):
+        raise HTTPException(status_code=404, detail="Benchmark não encontrado.")
+    path = WORKSPACE / "benchmarks" / benchmark_id / "benchmark_report.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Relatório ainda não disponível.")
+    try:
+        report = json.loads(path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Relatório inválido.") from exc
+    return Response(
+        content=_benchmark_csv(report),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="benchmark-{benchmark_id}.csv"'},
+    )
+
+
+@app.get("/api/jobs/{job_id}/model/viewer_manifest.json")
+def model_manifest(job_id: str):
+    path = _case_dir_for_job(job_id) / "outputs" / "viewer_manifest.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Modelo 3D nao disponivel.")
+    return FileResponse(path, media_type="application/json")
+
+
+@app.get("/api/jobs/{job_id}/model/{filename}")
+def model_file(job_id: str, filename: str):
+    case_dir = _case_dir_for_job(job_id)
+    manifest_path = case_dir / "outputs" / "viewer_manifest.json"
+    if Path(filename).name != filename or not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo do modelo nao encontrado.")
+    try:
+        manifest = json.loads(manifest_path.read_text("utf-8"))
+        allowed = {item.get("stl") for item in manifest.get("meshes", []) if isinstance(item, dict)}
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=404, detail="Manifesto do modelo invalido.")
+    if filename not in allowed:
+        raise HTTPException(status_code=404, detail="Arquivo do modelo nao encontrado.")
+    path = manifest_path.parent / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo do modelo nao encontrado.")
+    return FileResponse(path, media_type="model/stl", filename=filename)
+
+
+@app.post("/api/jobs/{job_id}/approval")
+def approve_model(job_id: str, payload: ApprovalPayload) -> dict:
+    case_dir = _case_dir_for_job(job_id)
+    if not _model_done(case_dir):
+        raise HTTPException(status_code=409, detail="Modelo 3D ainda nao esta disponivel.")
+    with _lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job nao encontrado.")
+    approval = {
+        "status": payload.status,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "review_type": "human_visual_review",
+    }
+    path = case_dir / "outputs" / "approval.json"
+    temp = path.with_name(".approval.json.tmp")
+    temp.write_text(json.dumps(approval, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp.replace(path)
+    _set(job_id, approval=approval)
+    return approval
 
 
 STATIC.mkdir(parents=True, exist_ok=True)
 _install_seg_launcher()
+app.mount("/viewer", StaticFiles(directory=str(VIEWER), html=True), name="viewer")
 app.mount("/", StaticFiles(directory=str(STATIC), html=True), name="static")
 
 

@@ -3,35 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Digital Twin — Visualizador (modo Pesquisa)</title>
-  <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
-    #banner { background: #7a1320; color: #fff; padding: 8px 14px; font-size: 13px; text-align: center; }
-    #wrap { display: flex; height: calc(100vh - 35px); }
-    #canvas-holder { flex: 1; position: relative; }
-    canvas { display: block; }
-    #panel { width: 280px; padding: 16px; background: #161b22; border-left: 1px solid #30363d; overflow-y: auto; }
-    #panel h1 { font-size: 15px; margin: 0 0 12px; }
-    .row { margin: 10px 0; font-size: 13px; }
-    label { display: flex; align-items: center; gap: 8px; }
-    #drop { border: 2px dashed #30363d; border-radius: 8px; padding: 18px; text-align: center; font-size: 13px; color: #8b949e; cursor: pointer; }
-    #drop.hover { border-color: #58a6ff; color: #58a6ff; }
-    .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-    #meta { font-size: 12px; color: #8b949e; margin-top: 14px; white-space: pre-wrap; }
-    input[type=range] { width: 100%; }
-  </style>
+  <title>Argos — Visualizador 3D</title>
+  <link rel="stylesheet" href="./argos-viewer.css" />
 </head>
 <body>
-  <div id="banner">⚠️ Modo Pesquisa — NÃO destinado a decisão clínica. Coordenadas LPS.</div>
+  <div id="banner">Modo Pesquisa — não destinado a decisão clínica · Coordenadas LPS</div>
   <div id="wrap">
-    <div id="canvas-holder"></div>
+    <div id="canvas-holder"><div class="canvas-badge">Modelo anatômico 3D · LPS</div></div>
     <div id="panel">
-      <h1>Digital Twin — Visualizador</h1>
+      <div class="viewer-brand">
+        <div class="viewer-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M3.2 12s3.2-5.2 8.8-5.2S20.8 12 20.8 12 17.6 17.2 12 17.2 3.2 12 3.2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg></div>
+        <div><strong>Argos</strong><span>Digital Twin Cirúrgico</span></div>
+      </div>
+      <div class="panel-heading"><div class="panel-kicker">Revisão anatômica</div><h1>Visualizador 3D</h1></div>
       <div id="drop">Arraste a pasta <b>outputs/</b> aqui<br/>(ou os arquivos: manifest + STLs)</div>
       <div id="controls"></div>
       <div id="meta"></div>
+      <div id="approval">
+        <h1>Revisão humana</h1>
+        <p>Inspecione o contorno do fígado antes de registrar sua decisão.</p>
+        <div class="approval-actions">
+          <button id="approve">Aprovar segmentação</button>
+          <button id="request-revision">Solicitar revisão</button>
+        </div>
+        <div id="approval-status">Pendente de revisão.</div>
+      </div>
     </div>
   </div>
   <script type="importmap">

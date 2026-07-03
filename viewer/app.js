@@ -8,9 +8,13 @@ const holder = document.getElementById("canvas-holder");
 const controlsDiv = document.getElementById("controls");
 const metaDiv = document.getElementById("meta");
 const drop = document.getElementById("drop");
+const approvalDiv = document.getElementById("approval");
+const approvalStatus = document.getElementById("approval-status");
+const approveButton = document.getElementById("approve");
+const revisionButton = document.getElementById("request-revision");
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d1117);
+scene.background = new THREE.Color(0xedf6f1);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
 camera.position.set(120, 120, 120);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -117,6 +121,38 @@ drop.addEventListener("drop", async (e) => {
 // --- Optional ?case=<path> when served over http ---
 const params = new URLSearchParams(location.search);
 const casePath = params.get("case");
+const jobId = params.get("job");
+
+async function submitApproval(status) {
+  approveButton.disabled = true;
+  revisionButton.disabled = true;
+  approvalStatus.textContent = "Registrando revisão...";
+  try {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Falha ao registrar revisão");
+    }
+    const data = await response.json();
+    approvalStatus.textContent = data.status === "approved"
+      ? "Segmentação aprovada e registrada."
+      : "Solicitação de revisão registrada.";
+  } catch (err) {
+    approvalStatus.textContent = err.message;
+    approveButton.disabled = false;
+    revisionButton.disabled = false;
+  }
+}
+
+if (jobId) {
+  approvalDiv.style.display = "block";
+  approveButton.onclick = () => submitApproval("approved");
+  revisionButton.onclick = () => submitApproval("revision_requested");
+}
 if (casePath) {
   (async () => {
     const base = casePath.replace(/\/$/, "");
