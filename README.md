@@ -1,4 +1,4 @@
-# ARGOS · Digital Twin Cirúrgico
+# ARGOS · Pré - Digital Twin Cirúrgico
 
 ![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 ![Modo](https://img.shields.io/badge/modo-Pesquisa-orange)
