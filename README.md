@@ -1,33 +1,28 @@
-# ARGOS — Digital Twin Cirúrgico
+# ARGOS · Digital Twin Cirúrgico
 
 ![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 ![Modo](https://img.shields.io/badge/modo-Pesquisa-orange)
-![IA](https://img.shields.io/badge/IA-MedGemma%2027B%20local-6f42c1)
 ![Licença](https://img.shields.io/badge/licença-Proprietária-lightgrey)
 
-> **Do exame ao modelo 3D — sem a nuvem, sem PHI, sem achismo.**
-> O ARGOS transforma uma ressonância magnética (série **DICOM**) no **modelo 3D do
-> órgão do paciente com a lesão destacada**, e ainda executa uma **triagem visual
-> por IA médica rodando 100% local**. Ponta a ponta, na sua máquina.
+O ARGOS transforma uma série DICOM de ressonância magnética no modelo 3D do órgão
+do paciente, com a lesão destacada e exportável em STL. Ele também faz uma triagem
+visual por IA médica que roda inteiramente na máquina local, sem mandar dados do
+paciente para fora.
 
-Projeto de **planejamento cirúrgico** que une, num só repositório, a **estratégia
-completa** do produto (pasta `contexto/`, 12 módulos) e a **implementação real do
-pipeline** (`dtwin/` + `profiles/` + `webapp/` + `viewer/`). Desenvolvido no
-contexto acadêmico **UEM · GETS · HU**.
+O repositório reúne duas coisas: a estratégia do produto (pasta `contexto/`, 12
+módulos) e a implementação do pipeline (`dtwin/`, `profiles/`, `webapp/`,
+`viewer/`). O trabalho é desenvolvido no contexto acadêmico UEM · GETS · HU.
 
-> ⚠️ **Modo Pesquisa.** Esta é a fundação anatômica (Nível 1) de um digital twin —
-> **não é dispositivo médico** e **não se destina a diagnóstico ou decisão
-> clínica**. Toda saída automática é rotulada `pending_review` e exige revisão
-> humana. A transição para uso clínico é um gate formal (ver
-> `contexto/03_REGULATORIO_LGPD.md`). Essa honestidade é uma decisão de projeto,
-> não uma limitação escondida.
+> **Modo Pesquisa.** Isto é a fundação anatômica (Nível 1) de um digital twin. Não
+> é dispositivo médico e não serve para diagnóstico ou decisão clínica. Toda saída
+> automática sai marcada como `pending_review` e depende de revisão humana. A
+> passagem para uso clínico é um gate formal, descrito em
+> `contexto/03_REGULATORIO_LGPD.md`.
 
----
+## O fluxo
 
-## O fluxo em um olhar
-
-Arraste a pasta DICOM de um exame no webapp local e o ARGOS faz o resto — **em
-subprocessos isolados, à prova de falhas, sem você ver a complexidade**:
+Você arrasta a pasta DICOM de um exame no webapp local e o ARGOS faz o resto, em
+subprocessos isolados:
 
 ```
  pasta DICOM (RM)
@@ -39,150 +34,138 @@ subprocessos isolados, à prova de falhas, sem você ver a complexidade**:
  4. triagem MedGemma 27B (local)  →  relatório estruturado (pending_review)
       │
       ▼
- 5. malha + STL do fígado  →  6. visualizador 3D  →  ✔ aprovação humana registrada
+ 5. malha + STL do fígado  →  6. visualizador 3D  →  aprovação humana registrada
 ```
 
-Se **qualquer** etapa falhar, o app mostra um cartão honesto — *"análise não
-concluída"* — e **nunca** um achado clínico fabricado. Um crash nativo (OOM de
-GPU, segfault de biblioteca) derruba apenas o subprocesso: **o servidor web
-permanece de pé**.
+Se alguma etapa falhar, o app mostra um cartão de "análise não concluída" em vez
+de um achado clínico inventado. E se uma biblioteca nativa quebrar (falta de
+memória na GPU, segfault), quem cai é só o subprocesso; o servidor web continua no
+ar.
 
----
+## Características principais
 
-## Por que o ARGOS impressiona
+- A IA roda no seu próprio hardware. O MedGemma 27B é servido localmente pelo
+  Ollama (acelerado por Metal no Apple Silicon), atrás de um contrato HTTP
+  chamado `dtwin-medgemma-v1`. Não há chave de API nem chamada externa na hora da
+  inferência.
 
-- 🧠 **IA médica que roda no seu hardware.** MedGemma 27B servido localmente via
-  **Ollama** (acelerado por Metal em Apple Silicon), sob um contrato próprio
-  `dtwin-medgemma-v1`. Nenhum byte do paciente sai da máquina. Sem chave de API,
-  sem nuvem, sem dependência externa em tempo de inferência.
+- O pipeline aborta em vez de inventar. Se a segmentação não carrega ou o modelo
+  não está pronto, ele para com um erro explícito (`PipelineError`). O `/health`
+  do backend mostra a falha real. Não existe resposta clínica simulada nem troca
+  silenciosa por outro modelo.
 
-- 🚫 **Fail-closed por princípio — não fabrica dado, nunca.** Se a segmentação não
-  carrega ou o modelo não está pronto, o pipeline **aborta** (`PipelineError`) em
-  vez de inventar. O `/health` do backend expõe a falha real; não há resposta
-  clínica simulada nem *fallback* silencioso para outro modelo.
+- A saída do modelo passa por uma trava. A resposta é validada contra um esquema
+  fixo (`POSITIVA`, `NEGATIVA` ou `INCONCLUSIVA`, com nível de confiança) e é
+  rejeitada se contiver diagnóstico definitivo ou recomendação de conduta. Todo
+  relatório sai com `requires_human_review: true`.
 
-- 🛡️ **Trava de segurança na saída da IA.** A resposta do modelo é validada contra
-  um esquema rígido (`POSITIVA` / `NEGATIVA` / `INCONCLUSIVA` + confiança) e
-  **rejeitada** se contiver diagnóstico definitivo ou recomendação de conduta.
-  Todo relatório carrega o disclaimer e `requires_human_review: true`.
+- Tem um benchmark embutido. Você aponta um dataset rotulado e o ARGOS roda cada
+  exame pelo pipeline real, calculando matriz de confusão, sensibilidade,
+  especificidade, precisão, F1, acurácia e cobertura, com exportação em JSON e
+  CSV. Casos inconclusivos e falhas ficam visíveis e contados à parte, para a
+  métrica não melhorar por exclusão.
 
-- 📊 **Benchmark científico embutido.** Aponte um dataset rotulado e o ARGOS roda
-  **cada exame pelo pipeline real**, produzindo **matriz de confusão,
-  sensibilidade, especificidade, precisão, F1, acurácia e cobertura**, com
-  exportação **JSON e CSV**. Inconclusivos e falhas ficam **visíveis e separados**
-  para não maquiar a métrica por exclusão. Nenhuma métrica é fabricada.
+- Trocar de órgão é trocar um arquivo. A regra clínica fica num YAML versionado,
+  não no código. Sair do fígado para o baço é copiar o perfil e mudar o rótulo do
+  alvo. O motor não muda.
 
-- 🧩 **Órgão-agnóstico de verdade.** A regra clínica mora em **config YAML
-  versionada, não no código**. Trocar de fígado para baço = copiar um perfil e
-  mudar um rótulo. **O motor não muda uma linha.**
+- Privacidade por construção. A des-identificação descarta os cabeçalhos DICOM na
+  conversão para NIfTI, e a pasta `casos/` nunca vai para o Git. O risco que sobra
+  (PHI queimada no pixel) está escrito no manifesto, não escondido.
 
-- 🔒 **Privacidade por construção (LGPD).** A des-identificação descarta os
-  cabeçalhos DICOM ao converter para NIfTI; dados de paciente (`casos/`) **nunca**
-  são versionados. O risco residual (PHI queimada em pixel) é declarado
-  explicitamente, não varrido para debaixo do tapete.
+- Saída determinística. Mesmo exame, mesma config e mesma marcação dão o mesmo
+  resultado. Cada caso deixa um `run.log` e um manifesto com os hashes SHA-256 das
+  entradas.
 
-- 🎯 **Determinístico e auditável.** Mesmo exame + mesma config + mesma marcação =
-  mesma saída. Cada caso deixa uma trilha `run.log` e um manifesto com hashes
-  SHA-256 das entradas.
+- Visualizador 3D offline. O Three.js vai vendorizado (sem CDN) e mostra o STL em
+  coordenadas LPS. A decisão do revisor fica gravada em `outputs/approval.json`.
 
-- 🖥️ **Visualizador 3D offline.** Three.js **vendorizado** (sem CDN) renderiza o
-  STL do órgão/lesão em coordenadas LPS e registra a decisão humana
-  (`Aprovar` / `Solicitar revisão`) em `outputs/approval.json`.
+- Testes e ferramentas. São mais de 100 testes automatizados (geometria, gates de
+  segurança, parser do MedGemma, webapp), CI no GitHub Actions, um subcomando
+  `doctor` de preflight, um gerador de caso sintético para testar sem GPU nem
+  DICOM, e o `run_mac.sh`, que sobe o ambiente inteiro com um comando.
 
-- ⚙️ **Engenharia levada a sério.** Mais de **100 testes automatizados** (geometria,
-  gates de segurança, parser do MedGemma, webapp), **CI no GitHub Actions**,
-  subcomando `doctor` de preflight, gerador de caso sintético (testa o pipeline
-  sem GPU/DICOM) e **`run_mac.sh` que sobe todo o ambiente com um comando** e
-  verificações de saúde.
+## Os sete estágios
 
----
-
-## Arquitetura em sete estágios
-
-O motor (`dtwin/`) é determinístico e órgão-agnóstico; cada estágio **valida a
-própria entrada e aborta se algo estiver errado** — nunca "segue mesmo assim".
+O motor (`dtwin/`) é determinístico e órgão-agnóstico. Cada estágio valida a
+própria entrada e aborta se algo estiver errado, em vez de seguir mesmo assim.
 
 | # | Estágio | O que faz |
 |---|---|---|
-| 1 | **Ingestão + des-identificação** | Lê o DICOM com geometria correta e anonimiza (NIfTI, sem PHI). |
-| 2 | **Normalização** | z-score para RM (referência de inspeção). |
-| 3 | **Segmentação do órgão** | Automática — TotalSegmentator MRI (`total_mr`). |
-| 4 | **Lesão** | `4a` prepara o handoff para o 3D Slicer; `4b` importa a marcação humana. |
-| 5 | **Refino** | Morfologia + remoção de fragmentos (gentil com a lesão). |
-| 6 | **Malha** | Marching cubes + suavização de superfície. |
-| 7 | **Exportação** | STL em LPS + manifesto para o visualizador web. |
+| 1 | Ingestão + des-identificação | Lê o DICOM com a geometria correta e anonimiza (NIfTI, sem PHI). |
+| 2 | Normalização | z-score para RM (referência de inspeção). |
+| 3 | Segmentação do órgão | Automática, com TotalSegmentator MRI (`total_mr`). |
+| 4 | Lesão | `4a` prepara o handoff para o 3D Slicer; `4b` importa a marcação humana. |
+| 5 | Refino | Morfologia e remoção de fragmentos, sem apagar lesão pequena. |
+| 6 | Malha | Marching cubes e suavização de superfície. |
+| 7 | Exportação | STL em LPS e manifesto para o visualizador web. |
 
-Fluxo de duas fases com **revisão humana no meio**: `prepare` (1–4a) → marcação da
-lesão no 3D Slicer → `finalize` (4b–7).
-
----
+O fluxo tem duas fases com revisão humana no meio: `prepare` (estágios 1 a 4a), a
+marcação da lesão no 3D Slicer, e depois `finalize` (4b a 7).
 
 ## Rodar
 
-### Modo rápido (MAC — um comando)
+### Modo rápido (MAC, um comando)
 
 ```bash
 bash run_mac.sh
 ```
 
-Sobe **Ollama → gateway MedGemma → webapp** na ordem certa, com verificação de
-saúde entre cada etapa, e abre `http://127.0.0.1:8080`. Passo a passo completo em
+Sobe Ollama, gateway MedGemma e webapp na ordem certa, com verificação de saúde
+entre cada etapa, e abre `http://127.0.0.1:8080`. O passo a passo completo está em
 [`RUNBOOK_MAC.md`](RUNBOOK_MAC.md).
 
 ### Pipeline por linha de comando
 
 ```bash
-pip install -e ".[seg]"          # traz TotalSegmentator + torch (GPU recomendada)
+pip install -e ".[seg]"          # traz TotalSegmentator e torch (GPU recomendada)
 
-# Fase 1 — ingestão + des-identificação + segmentação automática do órgão
+# Fase 1: ingestão + des-identificação + segmentação automática do órgão
 python digital_twin.py prepare /caminho/serie_dicom \
        --case-dir casos/paciente001 --profile profiles/figado.yaml
 
-# >>> marque a LESÃO no 3D Slicer (instruções impressas ao fim do prepare) <<<
+# marque a LESÃO no 3D Slicer (as instruções são impressas ao fim do prepare)
 
-# Fase 2 — importa a lesão + refino + malha + STL + manifesto do visualizador
+# Fase 2: importa a lesão + refino + malha + STL + manifesto do visualizador
 python digital_twin.py finalize casos/paciente001 --profile profiles/figado.yaml
 ```
 
-Saídas em `casos/paciente001/outputs/`: `figado_orgao.stl`, `figado_lesao.stl`
-(LPS) e `viewer_manifest.json`. Sem lesão? `finalize ... --no-lesion` (escolha
-explícita — o pipeline não fabrica nada).
+As saídas ficam em `casos/paciente001/outputs/`: `figado_orgao.stl`,
+`figado_lesao.stl` (em LPS) e `viewer_manifest.json`. Se o caso não tiver lesão,
+use `finalize ... --no-lesion`. É uma escolha explícita; o pipeline não fabrica
+nada.
 
 ### Triagem e benchmark pelo navegador
 
-- **Exame individual:** `http://127.0.0.1:8080` — arraste a pasta DICOM, receba o
-  relatório MedGemma e o botão **"Visualizar fígado em 3D e revisar"**.
-- **Benchmark:** `http://127.0.0.1:8080/benchmark.html` — arraste um dataset
-  rotulado (uma subpasta por exame) e obtenha a matriz de confusão e as métricas.
+- Exame individual: `http://127.0.0.1:8080`. Arraste a pasta DICOM e receba o
+  relatório do MedGemma e o botão "Visualizar fígado em 3D e revisar".
+- Benchmark: `http://127.0.0.1:8080/benchmark.html`. Arraste um dataset rotulado
+  (uma subpasta por exame) e obtenha a matriz de confusão e as métricas.
 
----
-
-## Adicionar um novo órgão (ex.: baço)
+## Adicionar um novo órgão (por exemplo, baço)
 
 1. Copie `profiles/figado.yaml` para `profiles/baco.yaml`.
 2. Ajuste `id`, `nome_exibicao` e `segmentacao_orgao.rotulo_alvo: spleen`.
-3. Rode com `--profile profiles/baco.yaml`. **O motor não muda.**
-
----
+3. Rode com `--profile profiles/baco.yaml`. O motor não muda.
 
 ## Estrutura do repositório
 
 ```
 argos/
-├── contexto/          ESTRATÉGIA — 12 módulos (visão, domínio, LGPD, roadmap...)
-├── dtwin/             O MOTOR — órgão-agnóstico e determinístico
+├── contexto/          estratégia do produto, 12 módulos (visão, domínio, LGPD, roadmap)
+├── dtwin/             o motor, órgão-agnóstico e determinístico
 │   ├── core.py            gates, geometria, Case, loader de perfil
 │   ├── stages.py          os 7 estágios, cada um com seu gate
 │   ├── engine.py          orquestrador (prepare / finalize)
 │   ├── medgemma_client.py config, prompt, adaptador HTTP e travas de resposta
-│   ├── medgemma_panel*.py montagem 2D (single / multifásica / textura)
+│   ├── medgemma_panel*.py montagem 2D (single, multifásica, textura)
 │   └── medgemma_screening.py  fluxo pós-prepare
-├── profiles/figado.yaml   TODA a regra específica do órgão (config, não código)
-├── configs/               backends MedGemma (Ollama 27B, MPS, 4-bit...)
-├── webapp/                orquestração FastAPI: exame individual + benchmark
+├── profiles/figado.yaml   a regra específica do órgão (config, não código)
+├── configs/               backends MedGemma (Ollama 27B, MPS, 4-bit)
+├── webapp/                orquestração FastAPI: exame individual e benchmark
 ├── viewer/                visualizador 3D Three.js (offline, vendorizado)
-├── digital_twin.py        CLI — a camada fina que obedece o motor
-├── run_mac.sh             sobe todo o ambiente com um comando
+├── digital_twin.py        CLI, a camada fina que obedece o motor
+├── run_mac.sh             sobe o ambiente com um comando
 └── RUNBOOK_MAC.md         passo a passo operacional
 ```
 
@@ -191,44 +174,43 @@ argos/
 | Arquivo | O que responde |
 |---|---|
 | `00_CONTEXTO.md` | Índice, fase atual, as regras de ouro |
-| `01_VISAO.md` | Produto, usuário, dor, o que o MVP **não** é |
+| `01_VISAO.md` | Produto, usuário, dor, o que o MVP não é |
 | `02_DOMINIO_CLINICO.md` | Fígado, RM, fidelidade, lesão, expansão de órgãos |
-| `03_REGULATORIO_LGPD.md` | Pesquisa→Clínico, anonimização, CEP, responsabilidade |
+| `03_REGULATORIO_LGPD.md` | Pesquisa para clínico, anonimização, CEP, responsabilidade |
 | `04_ARQUITETURA.md` | Pipeline órgão-agnóstico, perfis plugáveis, stack |
 | `05_PIPELINE.md` | Os estágios ponta a ponta e seus gates |
-| `06_SEGMENTACAO.md` | Órgão automático + lesão manual, dados, validação |
+| `06_SEGMENTACAO.md` | Órgão automático e lesão manual, dados, validação |
 | `07_INFRA_CUSTOS.md` | Hardware, deploy local, custo, origem dos exames |
-| `08_ROADMAP.md` | Fase 0→3, gates entre fases |
+| `08_ROADMAP.md` | Fase 0 a 3, gates entre fases |
 | `09_NEGOCIO.md` | Modelos de receita e sustentação |
-| `10_MATURIDADE_DIGITAL_TWIN.md` | Escada de 4 níveis: anatômico → twin preditivo |
+| `10_MATURIDADE_DIGITAL_TWIN.md` | Escada de 4 níveis: anatômico a twin preditivo |
 | `11_MEDGEMMA_SCREENING.md` | Triagem visual hepática MedGemma |
 
----
+## Bugs do script original corrigidos
 
-## Rigor de engenharia: bugs reais do script original corrigidos
+O ponto de partida foi um script que, entre outros problemas, gerava uma máscara
+aleatória quando a IA não carregava. O ARGOS reescreveu essa parte:
 
-O ponto de partida foi um script que, entre outros problemas, **gerava uma máscara
-aleatória quando a IA não carregava**. O ARGOS reescreveu isso do zero:
+- Slope/intercept de HU aplicado em dobro. O leitor já aplica, então não se
+  reaplica.
+- Ordem de eixos do `spacing` (x e z trocados). Agora a geometria física é
+  reconstruída via SimpleITK (origin, direction e spacing), e trata aquisições
+  oblíquas.
+- `selem=` virou `footprint=` (API atual do scikit-image).
+- `faces.reshape(-1, 3)`, que embaralhava as faces, virou o contador correto
+  `[3, i, j, k, ...]`.
+- Import de nnU-Net inexistente virou TotalSegmentator, com a API verificada.
+- O fallback de máscara aleatória virou abortar.
 
-- Slope/intercept de HU aplicado em dobro → o leitor já aplica; não reaplicar.
-- Ordem de eixos do `spacing` (x↔z) → geometria física completa via SimpleITK
-  (origin + direction + spacing); trata até aquisições oblíquas.
-- `selem=` → `footprint=` (API atual do scikit-image).
-- `faces.reshape(-1, 3)` (embaralhava faces) → contador `[3, i, j, k, ...]` correto.
-- Import de nnU-Net inexistente → TotalSegmentator (API verificada).
-- **Fallback de máscara aleatória → abortar.**
+## Fora do escopo por enquanto
 
----
-
-## Fora do escopo (por enquanto)
-
-Interface clínica integrada, integração PACS, pseudonimização ativa, FEA /
-tetraedralização (Nível 2), segmentos de Couinaud e vasculatura hepática — todos
+Interface clínica integrada, integração com PACS, pseudonimização ativa, FEA e
+tetraedralização (Nível 2), segmentos de Couinaud e vasculatura hepática. Estão
 mapeados e datados em `contexto/08_ROADMAP.md` e
-`contexto/10_MATURIDADE_DIGITAL_TWIN.md`. O que está aqui **funciona hoje**; o
-resto está no mapa, não no marketing.
+`contexto/10_MATURIDADE_DIGITAL_TWIN.md`. O que está listado acima funciona hoje;
+o resto está no roadmap.
 
 ---
 
-<sub>ARGOS · Digital Twin Cirúrgico · UEM · GETS · HU · Modo Pesquisa — não
-destinado a diagnóstico ou decisão clínica.</sub>
+ARGOS · Digital Twin Cirúrgico · UEM · GETS · HU · Modo Pesquisa, não destinado a
+diagnóstico ou decisão clínica.
