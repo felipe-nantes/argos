@@ -22,6 +22,7 @@ import csv
 import io
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -38,10 +39,11 @@ from urllib.request import urlopen
 import pydicom
 import SimpleITK as sitk
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.datastructures import FormData
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("dtwin.webapp")
@@ -59,6 +61,12 @@ PREP_TIMEOUT_GPU = int(os.environ.get("WEBAPP_PREP_TIMEOUT_GPU", "900"))
 PREP_TIMEOUT_CPU = int(os.environ.get("WEBAPP_PREP_TIMEOUT_CPU", "2400"))
 SCREEN_TIMEOUT = int(os.environ.get("WEBAPP_SCREEN_TIMEOUT", "600"))
 MODEL_TIMEOUT = int(os.environ.get("WEBAPP_MODEL_TIMEOUT", "300"))
+# O Starlette limita uploads multipart a 1000 arquivos por padrão (proteção
+# genérica contra DoS). Um dataset de benchmark real (muitos exames, cada um com
+# centenas/milhares de fatias DICOM) estoura isso com facilidade. O servidor só
+# escuta em loopback (uso local de pesquisa), então um teto bem mais alto — mas
+# ainda explícito, nunca ilimitado — é seguro aqui.
+MAX_UPLOAD_FILES = int(os.environ.get("WEBAPP_MAX_UPLOAD_FILES", "50000"))
 DISCLAIMER = (
     "Uso em pesquisa. Não destinado à decisão clínica. Não é diagnóstico nem "
     "laudo médico. Revisão médica obrigatória."
@@ -397,28 +405,73 @@ def process_job(job_id: str, raw_dir: Path) -> None:
         shutil.rmtree(WORKSPACE / job_id / "_series", ignore_errors=True)
 
 
-def calculate_benchmark_metrics(results: list[dict]) -> dict:
-    """Calcula métricas somente sobre respostas classificatórias válidas.
+def _wilson_interval(successes: int, total: int) -> dict | None:
+    """Intervalo binomial de Wilson de 95%, inclusive para amostras pequenas."""
+    if total <= 0:
+        return None
+    z = 1.959963984540054
+    proportion = successes / total
+    denominator = 1 + z * z / total
+    centre = (proportion + z * z / (2 * total)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            proportion * (1 - proportion) / total + z * z / (4 * total * total)
+        )
+        / denominator
+    )
+    return {
+        "low": round(max(0.0, centre - margin), 4),
+        "high": round(min(1.0, centre + margin), 4),
+    }
 
-    Falhas de pipeline e respostas INCONCLUSIVA ficam fora da matriz de confusão,
-    mas aparecem explicitamente nas taxas de conclusão e cobertura. Isso evita
-    melhorar artificialmente uma métrica escondendo exames que não foram avaliados.
+
+def calculate_benchmark_metrics(results: list[dict]) -> dict:
+    """Calcula o resultado conservador e métricas diagnósticas do benchmark.
+
+    A métrica principal usa todos os exames rotulados. Um positivo só acerta com
+    POSITIVA e um negativo só acerta com NEGATIVA; INCONCLUSIVA e falha contam
+    como erro. ``decisive_only`` preserva a leitura restrita às classificações
+    binárias, sem permitir que ela infle o gate principal de 75%.
     """
     total = len(results)
     reports = [r for r in results if r.get("status") in {"decisive", "inconclusive"}]
     decisive = [r for r in results if r.get("status") == "decisive"]
+    positive_total = sum(r.get("truth") == "positive" for r in results)
+    negative_total = sum(r.get("truth") == "negative" for r in results)
     tp = sum(r.get("truth") == "positive" and r.get("prediction") == "POSITIVA" for r in decisive)
     tn = sum(r.get("truth") == "negative" and r.get("prediction") == "NEGATIVA" for r in decisive)
-    fp = sum(r.get("truth") == "negative" and r.get("prediction") == "POSITIVA" for r in decisive)
-    fn = sum(r.get("truth") == "positive" and r.get("prediction") == "NEGATIVA" for r in decisive)
+    fn = positive_total - tp
+    fp = negative_total - tn
+    decisive_fp = sum(
+        r.get("truth") == "negative" and r.get("prediction") == "POSITIVA"
+        for r in decisive
+    )
+    decisive_fn = sum(
+        r.get("truth") == "positive" and r.get("prediction") == "NEGATIVA"
+        for r in decisive
+    )
     inconclusive = sum(r.get("status") == "inconclusive" for r in results)
     failed = sum(r.get("status") == "failed" for r in results)
 
     def ratio(num: int, den: int) -> float | None:
         return round(num / den, 4) if den else None
 
+    sensitivity = ratio(tp, positive_total)
+    specificity = ratio(tn, negative_total)
+    target_value = 0.75
+    target_met = bool(
+        sensitivity is not None
+        and specificity is not None
+        and sensitivity >= target_value
+        and specificity >= target_value
+    )
+
     return {
+        "scoring_policy": "inconclusive_and_failed_count_as_errors",
         "total_cases": total,
+        "positive_cases": positive_total,
+        "negative_cases": negative_total,
         "completed_reports": len(reports),
         "decisive_cases": len(decisive),
         "inconclusive_cases": inconclusive,
@@ -428,11 +481,32 @@ def calculate_benchmark_metrics(results: list[dict]) -> dict:
         "inconclusive_rate": ratio(inconclusive, total),
         "failure_rate": ratio(failed, total),
         "confusion_matrix": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
-        "accuracy": ratio(tp + tn, tp + tn + fp + fn),
-        "sensitivity": ratio(tp, tp + fn),
-        "specificity": ratio(tn, tn + fp),
+        "accuracy": ratio(tp + tn, total),
+        "sensitivity": sensitivity,
+        "specificity": specificity,
         "precision": ratio(tp, tp + fp),
         "f1_score": ratio(2 * tp, 2 * tp + fp + fn),
+        "confidence_intervals_95": {
+            "accuracy": _wilson_interval(tp + tn, total),
+            "sensitivity": _wilson_interval(tp, positive_total),
+            "specificity": _wilson_interval(tn, negative_total),
+        },
+        "target": {
+            "minimum_sensitivity": target_value,
+            "minimum_specificity": target_value,
+            "met": target_met,
+        },
+        "decisive_only": {
+            "confusion_matrix": {
+                "tp": tp,
+                "tn": tn,
+                "fp": decisive_fp,
+                "fn": decisive_fn,
+            },
+            "accuracy": ratio(tp + tn, tp + tn + decisive_fp + decisive_fn),
+            "sensitivity": ratio(tp, tp + decisive_fn),
+            "specificity": ratio(tn, tn + decisive_fp),
+        },
     }
 
 
@@ -458,7 +532,12 @@ def _run_benchmark_case(
 ) -> dict:
     """Executa segmentação + triagem para um exame, sem gerar a malha 3D."""
     benchmark_root = WORKSPACE / "benchmarks" / benchmark_id
-    case_dir = benchmark_root / "cases" / f"{index:04d}"
+    # case_dir PRECISA ser absoluto: a segmentação roda por um launcher com
+    # cwd=%TEMP% (workaround do nnU-Net no Windows). Se for relativo, a saída cai
+    # sob %TEMP% e _seg_done() — avaliado a partir da raiz do repo — nunca a
+    # encontra, marcando TODO exame como falha (e forçando o fallback lento p/ CPU).
+    # O fluxo de exame individual (process_job) já resolve por isso; espelhamos aqui.
+    case_dir = (benchmark_root / "cases" / f"{index:04d}").resolve()
     series_dir = benchmark_root / "_series" / f"{index:04d}"
     started = time.monotonic()
     base = {
@@ -657,6 +736,17 @@ def _benchmark_csv(report: dict) -> str:
     return stream.getvalue()
 
 
+async def _upload_form(request: Request) -> FormData:
+    """Analisa o multipart com o teto de arquivos elevado (MAX_UPLOAD_FILES).
+
+    FastAPI não expõe max_files/max_fields do parser do Starlette através de
+    File(...)/Form(...); por isso o form é lido manualmente aqui, nos dois
+    endpoints que recebem upload de exames. Sem `async with`: os UploadFile
+    precisam continuar abertos até serem lidos no corpo do endpoint; o
+    encerramento/limpeza é feito pelo próprio Starlette ao fim da requisição."""
+    return await request.form(max_files=MAX_UPLOAD_FILES, max_fields=MAX_UPLOAD_FILES)
+
+
 app = FastAPI(title="Digital Twin — Triagem MedGemma (demo, modo Pesquisa)")
 
 
@@ -673,14 +763,17 @@ def health() -> dict:
 
 
 @app.post("/api/analyze")
-async def analyze(files: list[UploadFile] = File(...), relpaths: str = Form(default="[]")) -> dict:
+async def analyze(request: Request) -> dict:
+    form = await _upload_form(request)
+    files = [v for v in form.getlist("files") if not isinstance(v, str)]
     if not files:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
+    relpaths = form.get("relpaths")
     job_id = uuid.uuid4().hex[:12]
     raw_dir = WORKSPACE / job_id / "_upload"
     raw_dir.mkdir(parents=True, exist_ok=True)
     try:
-        paths = json.loads(relpaths)
+        paths = json.loads(relpaths) if isinstance(relpaths, str) else []
         if not isinstance(paths, list):
             paths = []
     except Exception:  # noqa: BLE001
@@ -713,9 +806,14 @@ def status(job_id: str) -> dict:
 
 
 @app.post("/api/benchmarks")
-async def create_benchmark(files: list[UploadFile] = File(...), manifest: str = Form(...)) -> dict:
+async def create_benchmark(request: Request) -> dict:
+    form = await _upload_form(request)
+    files = [v for v in form.getlist("files") if not isinstance(v, str)]
     if not files:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
+    manifest = form.get("manifest")
+    if not isinstance(manifest, str):
+        raise HTTPException(status_code=400, detail="Manifesto do benchmark ausente.")
     parsed = _parse_benchmark_manifest(manifest, len(files))
     benchmark_id = uuid.uuid4().hex[:12]
     raw_dir = WORKSPACE / "benchmarks" / benchmark_id / "_upload"

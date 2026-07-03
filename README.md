@@ -61,9 +61,9 @@ ar.
 
 - Tem um benchmark embutido. Você aponta um dataset rotulado e o ARGOS roda cada
   exame pelo pipeline real, calculando matriz de confusão, sensibilidade,
-  especificidade, precisão, F1, acurácia e cobertura, com exportação em JSON e
-  CSV. Casos inconclusivos e falhas ficam visíveis e contados à parte, para a
-  métrica não melhorar por exclusão.
+  especificidade, precisão, F1, acurácia, cobertura e intervalos de confiança,
+  com exportação em JSON e CSV. Casos inconclusivos e falhas contam como erro nas
+  métricas principais e também ficam discriminados, evitando melhora por exclusão.
 
 - Trocar de órgão é trocar um arquivo. A regra clínica fica num YAML versionado,
   não no código. Sair do fígado para o baço é copiar o perfil e mudar o rótulo do
@@ -114,6 +114,22 @@ bash run_mac.sh
 Sobe Ollama, gateway MedGemma e webapp na ordem certa, com verificação de saúde
 entre cada etapa, e abre `http://127.0.0.1:8080`. O passo a passo completo está em
 [`RUNBOOK_MAC.md`](RUNBOOK_MAC.md).
+
+### Modo rápido (Windows, MedGemma 4B)
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run_win.ps1
+```
+
+O launcher valida a `.venv-win`, CUDA e as dependências, sobe o gateway com
+`configs/medgemma_local_4b.yaml` e inicia o mesmo webapp em
+`http://127.0.0.1:8080`. O backend muda, mas o contrato HTTP e o benchmark são os
+mesmos usados pelo 27B no Mac. O `ExecutionPolicy Bypass` vale somente para esse
+processo e não altera permanentemente a política do Windows.
+
+Na primeira execução, aceite a licença do MedGemma no Hugging Face, autentique-se
+com `.\.venv-win\Scripts\hf.exe auth login` e baixe os pesos com
+`.\.venv-win\Scripts\python.exe tools\setup_medgemma.py --config configs\medgemma_local_4b.yaml`.
 
 ### Pipeline por linha de comando
 

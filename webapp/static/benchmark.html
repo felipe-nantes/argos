@@ -119,21 +119,23 @@ function pollBenchmark(){clearInterval(pollTimer);pollTimer=setInterval(async()=
   $('#bar').style.width=(s.progress||2)+'%';$('#processed').textContent=`${s.processed} / ${s.total}`;$('#currentCase').textContent=s.current_case?`Processando ${s.current_case}`:'Finalizando relatório…';
   if(s.state==='done'){clearInterval(pollTimer);renderReport(s.report)}else if(s.state==='failed'){clearInterval(pollTimer);renderError(s.error||'Benchmark não concluído.')}}catch{}} ,1500)}
 const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
+const ci=(m,key)=>{const v=m.confidence_intervals_95?.[key];return v?`IC 95% ${pct(v.low)}–${pct(v.high)}`:'IC 95% indisponível'};
 function metric(label,value,detail,cls=''){return`<div class="metric ${cls}"><div class="k">${label}</div><div class="v">${value}</div><div class="d">${detail}</div></div>`}
 function renderReport(report){show($('#progressCard'),false);const card=$('#reportCard');show(card,true);const m=report.metrics,cm=m.confusion_matrix;
   const rows=report.cases.map(c=>{const state=c.status==='decisive'?(c.correct?'s-ok':'s-bad'):c.status==='inconclusive'?'s-inc':'s-bad';
     const label=c.status==='failed'?'FALHA':c.status==='inconclusive'?'INCONCLUSIVO':c.correct?'CORRETO':'INCORRETO';return`<tr><td>${esc(c.case_id)}</td><td>${c.truth==='positive'?'Positivo':'Negativo'}</td><td>${esc(c.prediction||'—')}</td><td><span class="status ${state}">${label}</span></td><td>${esc(c.confidence||'—')}</td><td>${c.duration_seconds}s</td></tr>`}).join('');
-  card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · ${esc(report.model.model_version||report.model.model_id||'MedGemma')}</div></div>
+  const gate=m.target?.met===true?'<span class="status s-ok">META 75% ATINGIDA</span>':'<span class="status s-bad">META 75% NÃO ATINGIDA</span>';
+  card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · ${esc(report.model.model_version||report.model.model_id||'MedGemma')} · ${gate}</div></div>
     <div class="download"><a href="/api/benchmarks/${currentBenchmark}/report.json">Baixar JSON</a><a href="/api/benchmarks/${currentBenchmark}/report.csv">Baixar CSV</a></div></div>
-    <div class="metrics">${metric('Acurácia',pct(m.accuracy),'respostas decisivas','primary-m')}${metric('Sensibilidade',pct(m.sensitivity),'detecção de positivos')}
-      ${metric('Especificidade',pct(m.specificity),'reconhecimento de negativos')}${metric('F1-score',pct(m.f1_score),'equilíbrio precisão/recall')}
+    <div class="metrics">${metric('Acurácia',pct(m.accuracy),ci(m,'accuracy'),'primary-m')}${metric('Sensibilidade',pct(m.sensitivity),ci(m,'sensitivity'))}
+      ${metric('Especificidade',pct(m.specificity),ci(m,'specificity'))}${metric('F1-score',pct(m.f1_score),'inconclusivos/falhas penalizados')}
       ${metric('Precisão',pct(m.precision),'valor preditivo positivo')}${metric('Cobertura',pct(m.coverage_rate),`${m.decisive_cases} de ${m.total_cases} decisivos`,'good')}
       ${metric('Inconclusivos',m.inconclusive_cases,pct(m.inconclusive_rate))}${metric('Falhas',m.failed_cases,pct(m.failure_rate))}</div>
     <div class="split"><div class="card"><h3>Matriz de confusão</h3><div class="matrix"><div class="cell ok"><b>${cm.tp}</b><span>Verdadeiros positivos</span></div>
       <div class="cell err"><b>${cm.fp}</b><span>Falsos positivos</span></div><div class="cell err"><b>${cm.fn}</b><span>Falsos negativos</span></div>
       <div class="cell ok"><b>${cm.tn}</b><span>Verdadeiros negativos</span></div></div></div>
       <div class="card results"><h3>Resultados por exame</h3><table><thead><tr><th>Exame</th><th>Referência</th><th>Predição</th><th>Resultado</th><th>Confiança</th><th>Tempo</th></tr></thead><tbody>${rows}</tbody></table></div></div>
-    <div class="note">A matriz e as métricas classificatórias usam apenas respostas POSITIVA/NEGATIVA. Cobertura, inconclusivos e falhas são mostrados separadamente para evitar viés por exclusão.</div>
+    <div class="note">Política conservadora: INCONCLUSIVA e falha contam como erro na matriz e nas métricas principais. Cobertura e a leitura somente das decisões permanecem no JSON para diagnóstico, mas não podem inflar o gate de sensibilidade e especificidade ≥75%.</div>
     <div class="actions"><button class="primary" onclick="location.reload()">Novo benchmark</button></div>`;
 }
 function renderError(message){clearInterval(pollTimer);show($('#progressCard'),false);const card=$('#reportCard');show(card,true);card.classList.add('error');

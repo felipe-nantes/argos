@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from dtwin.core import PipelineError
@@ -158,16 +160,35 @@ def test_benchmark_metrics_keep_failures_and_inconclusives_visible():
         {"truth": "negative", "prediction": None, "status": "failed"},
     ]
     metrics = server.calculate_benchmark_metrics(results)
-    assert metrics["confusion_matrix"] == {"tp": 1, "tn": 1, "fp": 1, "fn": 1}
-    assert metrics["accuracy"] == 0.5
-    assert metrics["sensitivity"] == 0.5
-    assert metrics["specificity"] == 0.5
-    assert metrics["precision"] == 0.5
-    assert metrics["f1_score"] == 0.5
+    assert metrics["confusion_matrix"] == {"tp": 1, "tn": 1, "fp": 2, "fn": 2}
+    assert metrics["accuracy"] == 0.3333
+    assert metrics["sensitivity"] == 0.3333
+    assert metrics["specificity"] == 0.3333
+    assert metrics["precision"] == 0.3333
+    assert metrics["f1_score"] == 0.3333
     assert metrics["coverage_rate"] == 0.6667
     assert metrics["completion_rate"] == 0.8333
     assert metrics["inconclusive_cases"] == 1
     assert metrics["failed_cases"] == 1
+    assert metrics["scoring_policy"] == "inconclusive_and_failed_count_as_errors"
+    assert metrics["target"]["met"] is False
+    assert metrics["decisive_only"]["confusion_matrix"] == {
+        "tp": 1, "tn": 1, "fp": 1, "fn": 1,
+    }
+
+
+def test_benchmark_target_requires_both_classes_at_75_percent():
+    results = [
+        *[{"truth": "positive", "prediction": "POSITIVA", "status": "decisive"}] * 3,
+        {"truth": "positive", "prediction": "INCONCLUSIVA", "status": "inconclusive"},
+        *[{"truth": "negative", "prediction": "NEGATIVA", "status": "decisive"}] * 3,
+        {"truth": "negative", "prediction": None, "status": "failed"},
+    ]
+    metrics = server.calculate_benchmark_metrics(results)
+    assert metrics["sensitivity"] == 0.75
+    assert metrics["specificity"] == 0.75
+    assert metrics["target"]["met"] is True
+    assert metrics["confidence_intervals_95"]["sensitivity"] is not None
 
 
 def test_benchmark_metrics_return_none_when_class_is_absent():
@@ -179,6 +200,7 @@ def test_benchmark_metrics_return_none_when_class_is_absent():
     assert metrics["sensitivity"] is None
     assert metrics["precision"] is None
     assert metrics["f1_score"] is None
+    assert metrics["target"]["met"] is False
 
 
 def test_benchmark_upload_maps_files_to_cases(monkeypatch, tmp_path):
@@ -214,6 +236,79 @@ def test_benchmark_upload_maps_files_to_cases(monkeypatch, tmp_path):
     root = tmp_path / "benchmarks" / benchmark_id / "_upload"
     assert len(list((root / "0001").iterdir())) == 2
     assert len(list((root / "0002").iterdir())) == 1
+
+
+def test_benchmark_upload_accepts_more_than_default_starlette_file_cap(monkeypatch, tmp_path):
+    """Starlette limita multipart a max_files=1000 por padrão; um dataset de
+    benchmark real (muitos exames x muitas fatias) estoura isso facilmente.
+    O endpoint precisa aceitar mais, via MAX_UPLOAD_FILES (ver webapp/server.py)."""
+    import json
+
+    monkeypatch.setattr(server, "process_benchmark", lambda *a, **k: None)
+    monkeypatch.setattr(server, "WORKSPACE", tmp_path)
+    client = TestClient(server.app)
+    n = 1200  # acima do max_files=1000 default do Starlette; abaixo de MAX_UPLOAD_FILES
+    manifest = {
+        "dataset_name": "Dataset grande",
+        "dataset_kind": "positive",
+        "cases": [{"id": "caso-a", "label": "positive", "file_indices": list(range(n))}],
+    }
+    response = client.post(
+        "/api/benchmarks",
+        files=[("files", (f"slice_{i:05d}.dcm", b"x", "application/dicom")) for i in range(n)],
+        data={"manifest": json.dumps(manifest)},
+    )
+    assert response.status_code == 200
+    assert response.json()["total_cases"] == 1
+
+
+def test_benchmark_case_uses_absolute_case_dir_and_scores(monkeypatch, tmp_path):
+    """Regressão: a segmentação do benchmark roda por um launcher com cwd=%TEMP%.
+    Se o case_dir for relativo, a saída cai fora do repo e _seg_done() nunca a
+    encontra, marcando TODO exame como falha. O case_dir precisa ser absoluto."""
+    import subprocess
+
+    # Reproduz produção: WORKSPACE é RELATIVO ("casos/webapp"). Sem .resolve() no
+    # código, o case_dir sairia relativo — é exatamente isso que o teste captura.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server, "WORKSPACE", Path("casos/webapp"))
+    seen = {}
+
+    def fake_segment(series_dir, case_dir, device, timeout):
+        # o bug real era o case_dir chegar relativo aqui
+        seen["absolute"] = Path(case_dir).is_absolute()
+        # simula uma segmentação bem-sucedida gravando os artefatos esperados
+        Path(case_dir).mkdir(parents=True, exist_ok=True)
+        (Path(case_dir) / "volume.nii.gz").write_bytes(b"vol")
+        (Path(case_dir) / "mask_organ.nii.gz").write_bytes(b"mask")
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    def fake_run(cmd, timeout, cwd=None):  # a triagem MedGemma (subprocesso)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    def fake_load_report(path):
+        return {"report": {"resultado_hipotese": "POSITIVA", "confianca": "alta",
+                           "resumo_do_achado": "x"}}
+
+    monkeypatch.setattr(server, "_segment", fake_segment)
+    monkeypatch.setattr(server, "_run", fake_run)
+    monkeypatch.setattr(server, "_load_report", fake_load_report)
+
+    raw_case = tmp_path / "raw" / "0001"
+    raw_case.mkdir(parents=True)
+    dcm_files = []
+    for i in range(3):
+        f = raw_case / f"IMG-{i}.dcm"
+        f.write_bytes(b"fake-dicom")
+        dcm_files.append(str(f))
+    monkeypatch.setattr(server, "find_best_series", lambda d: (dcm_files, 3))
+
+    result = server._run_benchmark_case("bench01", 1, {"id": "c1", "label": "positive"}, raw_case)
+
+    assert seen["absolute"] is True, "case_dir passado à segmentação deve ser absoluto"
+    assert result["status"] == "decisive"
+    assert result["prediction"] == "POSITIVA"
+    assert result["correct"] is True
 
 
 def test_benchmark_upload_rejects_unmapped_file(monkeypatch, tmp_path):

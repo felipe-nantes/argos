@@ -324,7 +324,13 @@ def create_app(config_path: Path):
 
     @app.get("/health")
     def health():
-        import torch
+        # O runtime Ollama nao depende de PyTorch neste processo. O health deve
+        # continuar acessivel em uma instalacao minima e expor o erro real do
+        # runtime Transformers quando torch ainda nao estiver instalado.
+        try:
+            import torch
+        except ImportError:
+            torch = None
 
         return {
             "status": "ready" if runtime.loaded else "failed",
@@ -334,9 +340,17 @@ def create_app(config_path: Path):
             "model_version": runtime.med["model_version"],
             "quantization": runtime.med.get("quantization"),
             "device": runtime.med.get("device"),
-            "cuda_available": torch.cuda.is_available(),
-            "mps_available": torch.backends.mps.is_available(),
-            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "cuda_available": bool(torch and torch.cuda.is_available()),
+            "mps_available": bool(
+                torch
+                and hasattr(torch.backends, "mps")
+                and torch.backends.mps.is_available()
+            ),
+            "gpu": (
+                torch.cuda.get_device_name(0)
+                if torch and torch.cuda.is_available()
+                else None
+            ),
             "load_error": runtime.load_error,
             "research_only": True,
         }
