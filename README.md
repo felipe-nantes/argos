@@ -1,4 +1,4 @@
-# Digital Twin Cirúrgico — UEM · GETS · HU
+# ARGOS - Projeto de pesquisa acadêmica e desenvolvimento tecnológico
 
 Projeto de **planejamento cirúrgico** que transforma uma série **DICOM de RM** em
 um **modelo 3D do órgão do paciente com a lesão destacada**, exportável em **STL** e
