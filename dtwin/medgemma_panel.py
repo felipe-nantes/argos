@@ -18,6 +18,7 @@ from scipy.ndimage import binary_dilation
 from skimage.segmentation import find_boundaries
 
 from .core import PipelineError, array_from, now_utc, read_image, sha256_of
+from .medgemma_volumetric import panel_strategy, render_volumetric_panel_set
 
 
 PANEL_FILENAME = "medgemma_liver_screening_panel.png"
@@ -32,6 +33,7 @@ class PanelResult:
     axial_indices: tuple[int, ...]
     coronal_index: int
     sagittal_index: int
+    panel_paths: tuple[Path, ...] = ()
 
 
 def _geometry_compatible(volume, mask, atol: float = 1e-5) -> bool:
@@ -198,11 +200,7 @@ def generate_liver_panel(
             f"Máscara do fígado implausivelmente grande ({fraction:.1%} do volume)."
         )
 
-    axial_count = int(panel_cfg.get("axial_slices", 9))
-    if axial_count != 9:
-        raise PipelineError("O contrato atual exige exatamente 9 fatias axiais (grade 3x3).")
     axial_present = np.flatnonzero(mask.any(axis=(1, 2)))
-    axial_indices = _select_uniform_indices(axial_present, axial_count)
     centroid_zyx = np.rint(np.argwhere(mask).mean(axis=0)).astype(int)
     zc, yc, xc = (int(x) for x in centroid_zyx)
 
@@ -221,6 +219,83 @@ def generate_liver_panel(
     contour_color = tuple(int(np.clip(x, 0, 255)) for x in color_raw)
 
     sx, sy, sz = (float(x) for x in volume_img.GetSpacing())
+    strategy = panel_strategy(panel_cfg)
+    if strategy == "volumetric_blocks":
+        panel_set = render_volumetric_panel_set(
+            mask=mask,
+            output_dir=output_dir,
+            tile_size=tile_size,
+            axial_tiles_per_panel=int(panel_cfg.get("axial_tiles_per_panel", 9)),
+            index_offset_zyx=(0, 0, 0),
+            render_axial=lambda z, label: _render_tile(
+                volume[z], mask[z], label, tile_size, lo, hi, sy, sx,
+                contour_width, contour_color,
+            ),
+            render_coronal=lambda y, label: _render_tile(
+                volume[:, y, :], mask[:, y, :], label, tile_size, lo, hi, sz, sx,
+                contour_width, contour_color,
+            ),
+            render_sagittal=lambda x, label: _render_tile(
+                volume[:, :, x], mask[:, :, x], label, tile_size, lo, hi, sz, sy,
+                contour_width, contour_color,
+            ),
+            notice_text=(
+                "MODO PESQUISA\n\nCobertura volumetrica.\nHipotese visual apenas.\n"
+                "NAO e diagnostico.\nNAO e laudo medico.\n\nRevisao humana obrigatoria."
+            ),
+            max_image_pixels=int(screening_config["medgemma"].get("max_image_pixels", 4_000_000)),
+            max_input_bytes=int(screening_config["medgemma"]["max_input_bytes"]),
+        )
+        first_path = panel_set.panel_paths[0]
+        manifest = {
+            "schema_version": "dtwin-medgemma-panel-set-v2",
+            "case_id": case_manifest["case_id"], "organ": expected_organ,
+            "modality": "MRI", "regulatory_mode": "RESEARCH",
+            "input_type": "mri_with_liver_contour", "lesion_pre_marked": False,
+            "panel_strategy": strategy,
+            "panel_image": first_path.name,
+            "panel_sha256": sha256_of(first_path),
+            "panel_count": 11,
+            "panel_image_count": len(panel_set.panel_paths),
+            "total_tile_count": sum(len(p["tiles"]) for p in panel_set.panels),
+            "panels": list(panel_set.panels),
+            "input_volume_sha256": volume_sha256,
+            "input_liver_mask_sha256": liver_mask_sha256,
+            "views": {
+                "axial_indices_zyx": list(panel_set.axial_indices),
+                "coronal_centroid_y": yc, "sagittal_centroid_x": xc,
+            },
+            "coverage": panel_set.coverage,
+            "liver_mask_voxels": mask_voxels,
+            "png_metadata_keys": list(panel_set.png_metadata_keys),
+            "phi_metadata_removed": True,
+            "visible_phi_review_required": True,
+            "visible_phi_confirmed": bool(visible_phi_confirmed),
+            "created_at": now_utc(), "requires_human_review": True,
+            **model_trace,
+            "notes": [
+                "No lesion mask was read, provided, or rendered.",
+                "All liver-bearing axial slices are represented exactly once.",
+                "No patient identifiers were added to the panels or PNG metadata.",
+                "Burned-in pixel PHI cannot be ruled out automatically; visual confirmation is required before inference.",
+                "Analysis is for research and education only.",
+            ],
+        }
+        manifest_path = output_dir / PANEL_MANIFEST_FILENAME
+        temp_path = output_dir / f".{PANEL_MANIFEST_FILENAME}.tmp"
+        temp_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(manifest_path)
+        return PanelResult(
+            panel_path=first_path, panel_paths=panel_set.panel_paths,
+            manifest_path=manifest_path, panel_count=11,
+            axial_indices=panel_set.axial_indices,
+            coronal_index=yc, sagittal_index=xc,
+        )
+
+    axial_count = int(panel_cfg.get("axial_slices", 9))
+    if axial_count != 9:
+        raise PipelineError("O contrato atual exige exatamente 9 fatias axiais (grade 3x3).")
+    axial_indices = _select_uniform_indices(axial_present, axial_count)
     tiles: list[Image.Image] = []
     for number, z in enumerate(axial_indices, start=1):
         tiles.append(
@@ -311,4 +386,5 @@ def generate_liver_panel(
         axial_indices=axial_indices,
         coronal_index=yc,
         sagittal_index=xc,
+        panel_paths=(panel_path,),
     )

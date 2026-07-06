@@ -1,0 +1,6 @@
+# Cenário B aplicado à fusão multifásica RGB.
+extends: medgemma_local_4b_multiphase.yaml
+medgemma_screening:
+  panel:
+    strategy: volumetric_blocks
+    axial_tiles_per_panel: 9

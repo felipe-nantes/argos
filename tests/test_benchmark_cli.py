@@ -8,8 +8,11 @@ from dtwin.benchmark.importers import load_dataset_manifest, prepare_inference_c
 from dtwin.benchmark.metrics import compute_benchmark_metrics
 from dtwin.benchmark.reporting import write_run_outputs
 from dtwin.benchmark.runner import ExperimentConfig, recalculate_existing_run
-from dtwin.core import sha256_of
 from dtwin.medgemma_benchmark import main
+from dtwin.medgemma_client import effective_config_sha256, load_screening_config
+
+# Config real e válida (o runner agora valida a config como o subprocesso real faria).
+BASELINE_CONFIG = Path("configs/medgemma_local_4b.yaml")
 
 
 def _fixture(tmp_path):
@@ -31,14 +34,7 @@ def _fixture(tmp_path):
   - {name: TEST, format: MIDS, root: dataset, labels_manifest: labels.yaml}
 """, encoding="utf-8",
     )
-    med = tmp_path / "med.yaml"
-    med.write_text("""medgemma_screening:
-  medgemma:
-    model_id: test/medgemma
-    model_version: test-v1
-    model_parameter_scale: 4B
-""", encoding="utf-8")
-    return tmp_path / "datasets.yaml", med
+    return tmp_path / "datasets.yaml", BASELINE_CONFIG
 
 
 def test_cli_dry_run_validates_and_never_calls_inference(tmp_path, capsys):
@@ -65,10 +61,16 @@ def test_recalculate_existing_run_checks_hashes_without_inference(tmp_path):
         "input_hashes": inference.input_hashes,
     }]
     metrics = compute_benchmark_metrics(rows)
+    # Deriva os valores esperados da MESMA config real que o runner valida, para
+    # que a checagem de reuso (model, hash de conteúdo e panel_strategy) passe.
+    screening = load_screening_config(med)
     source_manifest = {
-        "run_id": "source", "code_commit": "abc", "model_id": "test/medgemma",
-        "model_version": "test-v1", "medgemma_config_hash": sha256_of(med),
+        "run_id": "source", "code_commit": "abc",
+        "model_id": screening["medgemma"]["model_id"],
+        "model_version": screening["medgemma"]["model_version"],
+        "medgemma_config_hash": effective_config_sha256(screening),
         "experimental_strategy": "current_panel",
+        "panel_strategy": screening.get("panel", {}).get("strategy", "uniform_9"),
     }
     write_run_outputs(source_dir, source_manifest, rows, metrics)
     new_dir, new_metrics, results = recalculate_existing_run(

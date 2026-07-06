@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import os
 import re
@@ -93,9 +94,16 @@ def load_screening_config(
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise PipelineError(f"Configuração MedGemma inválida ({path}): {exc}") from exc
+    inherited: dict[str, Any] = {}
+    if raw.get("extends"):
+        parent = (path.parent / str(raw["extends"])).resolve()
+        if parent.parent != path.parent.resolve() or parent == path.resolve():
+            raise PipelineError("Configuração MedGemma extends deve apontar para arquivo no mesmo diretório.")
+        inherited = load_screening_config(parent, environ={})
     if not isinstance(raw.get("medgemma_screening"), dict):
         raise PipelineError("Configuração sem bloco 'medgemma_screening'.")
-    config = copy.deepcopy(raw["medgemma_screening"])
+    config = copy.deepcopy(inherited)
+    _deep_merge(config, raw["medgemma_screening"])
     med = config.get("medgemma")
     if not isinstance(med, dict):
         raise PipelineError("Configuração sem bloco 'medgemma_screening.medgemma'.")
@@ -134,6 +142,14 @@ def load_screening_config(
     return config
 
 
+def _deep_merge(target: dict[str, Any], override: Mapping[str, Any]) -> None:
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = copy.deepcopy(value)
+
+
 def _validate_config(config: dict[str, Any]) -> None:
     if config.get("enabled") is not True:
         raise PipelineError("medgemma_screening.enabled deve ser true.")
@@ -158,6 +174,17 @@ def _validate_config(config: dict[str, Any]) -> None:
             "report.disclaimer deve declarar modo Pesquisa, não diagnóstico e revisão humana."
         )
     panel = config.get("panel", {})
+    strategy = str(panel.get("strategy", "uniform_9"))
+    if strategy not in {"uniform_9", "volumetric_blocks"}:
+        raise PipelineError(
+            "panel.strategy deve ser 'uniform_9' ou 'volumetric_blocks'."
+        )
+    if strategy == "volumetric_blocks" and int(
+        panel.get("axial_tiles_per_panel", 9)
+    ) != 9:
+        raise PipelineError(
+            "panel.axial_tiles_per_panel deve ser 9 para preservar a grade 4x3."
+        )
     if panel.get("include_coronal") is not True or panel.get("include_sagittal") is not True:
         raise PipelineError("O painel exige vistas coronal e sagital.")
     mode = str(panel.get("mode", "single_grayscale"))
@@ -227,6 +254,11 @@ def model_trace(config: dict[str, Any]) -> dict[str, Any]:
         "quantization": med.get("quantization"),
         "requires_human_review": True,
     }
+
+
+def effective_config_sha256(config: dict[str, Any]) -> str:
+    canonical = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_medgemma_prompt(config: dict[str, Any]) -> str:

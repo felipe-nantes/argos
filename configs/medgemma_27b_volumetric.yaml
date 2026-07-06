@@ -1,0 +1,6 @@
+# Cenário B para o 27B; mantém as mesmas restrições de disponibilidade do arquivo-base.
+extends: medgemma_27b.yaml
+medgemma_screening:
+  panel:
+    strategy: volumetric_blocks
+    axial_tiles_per_panel: 9

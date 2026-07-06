@@ -65,8 +65,9 @@ def test_runner_subprocess_never_receives_ground_truth(monkeypatch, tmp_path):
     case = _dataset(tmp_path)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    med_config = tmp_path / "config.yaml"
-    med_config.write_text("x: 1", encoding="utf-8")
+    # O runner valida a config e calcula o timeout efetivo a partir da máscara,
+    # como o subprocesso real faria; use uma config real e válida.
+    med_config = Path("configs/medgemma_local_4b.yaml")
     seen = {}
 
     def fake_run(command, **kwargs):
@@ -97,8 +98,7 @@ def test_runner_timeout_is_a_distinct_error(monkeypatch, tmp_path):
     case = _dataset(tmp_path)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    med_config = tmp_path / "config.yaml"
-    med_config.write_text("x: 1", encoding="utf-8")
+    med_config = Path("configs/medgemma_local_4b.yaml")
 
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 1)

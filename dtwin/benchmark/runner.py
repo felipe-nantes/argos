@@ -14,7 +14,9 @@ from typing import Any, Iterable
 
 import yaml
 
-from dtwin.core import PipelineError, sha256_of
+from dtwin.core import PipelineError, array_from, read_image, sha256_of
+from dtwin.medgemma_client import effective_config_sha256, load_screening_config
+from dtwin.medgemma_volumetric import effective_screening_timeout
 
 from .hashing import git_state
 from .importers import DatasetCase, attach_ground_truth, prepare_inference_case, validate_inference_source
@@ -68,11 +70,7 @@ def make_run_id(commit: str | None, experiment: str, now: datetime | None = None
 
 
 def _load_model_config(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    try:
-        config = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise PipelineError(f"Config MedGemma inválida: {exc}") from exc
-    screening = config.get("medgemma_screening") or {}
+    screening = load_screening_config(path)
     model = screening.get("medgemma") or {}
     if not model.get("model_id"):
         raise PipelineError("Config MedGemma sem model_id.")
@@ -116,6 +114,8 @@ def build_run_manifest(
     state = git_state(repo)
     if experiment.final_evaluation and state["git_dirty"]:
         raise PipelineError("Avaliação final exige árvore Git limpa.")
+    screening_config = load_screening_config(medgemma_config)
+    panel_strategy = str(screening_config.get("panel", {}).get("strategy", "uniform_9"))
     return {
         "schema_version": 1,
         "run_id": run_id,
@@ -127,10 +127,11 @@ def build_run_manifest(
         "model_parameter_scale": model.get("model_parameter_scale"),
         "runtime": model.get("runtime", "transformers"),
         "medgemma_config_path": str(Path(medgemma_config)),
-        "medgemma_config_hash": sha256_of(Path(medgemma_config)),
+        "medgemma_config_hash": effective_config_sha256(screening_config),
         "experiment_config_path": str(experiment_config_path) if experiment_config_path else None,
         "experiment_config_hash": sha256_of(experiment_config_path) if experiment_config_path else None,
         "experimental_strategy": experiment.name,
+        "panel_strategy": panel_strategy,
         "dataset_names": sorted({case.inference.dataset for case in cases}),
         "num_cases_total": len(cases),
         "num_cases_positive": sum(case.ground_truth.label.value == "positive" for case in cases),
@@ -210,9 +211,15 @@ def run_case(
     error_message = None
     screening_timings: dict[str, float | None] = {}
     try:
+        screening_config = load_screening_config(medgemma_config)
+        effective_timeout, expected_panel_count = effective_screening_timeout(
+            array_from(read_image(inference.organ_mask_path)) > 0,
+            screening_config,
+            experiment.timeout_seconds,
+        )
         process = subprocess.run(
             command, cwd=Path(__file__).resolve().parents[2], capture_output=True,
-            text=True, timeout=experiment.timeout_seconds, check=False,
+            text=True, timeout=effective_timeout, check=False,
         )
         report_path = output / "medgemma_report.json"
         if process.returncode != 0 or not report_path.is_file():
@@ -238,10 +245,11 @@ def run_case(
     evaluation_started = time.monotonic()
     evaluation = attach_ground_truth(case, inference)
     report_path = output / "medgemma_report.json"
-    panel_candidates = list(output.glob("*.png")) if output.is_dir() else []
+    panel_candidates = sorted(output.glob("*.png")) if output.is_dir() else []
     hashes = dict(inference.input_hashes)
     if panel_candidates:
         hashes["panel"] = sha256_of(panel_candidates[0])
+        hashes["panels"] = {path.name: sha256_of(path) for path in panel_candidates}
     result = BenchmarkCaseResult(
         case_id=inference.case_id, dataset=inference.dataset, input_format=inference.input_format,
         truth=evaluation.label, status=status, prediction=prediction, confidence=confidence,
@@ -259,7 +267,12 @@ def run_case(
         error_type=error_type, error_message=error_message,
         report_path=_relative(report_path if report_path.is_file() else None, run_dir),
         panel_path=_relative(panel_candidates[0] if panel_candidates else None, run_dir),
-        extra={},
+        extra={
+            "panel_strategy": screening_config.get("panel", {}).get("strategy", "uniform_9"),
+            "panel_paths": [_relative(path, run_dir) for path in panel_candidates],
+            "expected_panel_count": expected_panel_count,
+            "effective_screening_timeout_seconds": effective_timeout,
+        },
     )
     return result
 
@@ -336,8 +349,11 @@ def recalculate_existing_run(
     checks = {
         "model_id": model.get("model_id"),
         "model_version": model.get("model_version"),
-        "medgemma_config_hash": sha256_of(medgemma_config),
+        "medgemma_config_hash": effective_config_sha256(load_screening_config(medgemma_config)),
         "experimental_strategy": experiment.name,
+        "panel_strategy": load_screening_config(medgemma_config).get("panel", {}).get(
+            "strategy", "uniform_9"
+        ),
     }
     mismatches = [key for key, expected in checks.items() if source_manifest.get(key) != expected]
     if mismatches:
@@ -370,13 +386,23 @@ def recalculate_existing_run(
             segment_if_missing=experiment.segment_if_missing,
             device=experiment.device,
         )
-        if dict(prior.get("input_hashes") or {}) != inference.input_hashes:
+        prior_hashes = dict(prior.get("input_hashes") or {})
+        prior_inputs = {
+            key: value for key, value in prior_hashes.items()
+            if key not in {"panel", "panels"}
+        }
+        if prior_inputs != inference.input_hashes:
             raise PipelineError(f"Hashes divergentes ao reutilizar {key[0]}/{key[1]}")
+        for relative_panel in (prior.get("extra") or {}).get("panel_paths", []):
+            source_panel = existing_run / relative_panel
+            expected_hash = (prior_hashes.get("panels") or {}).get(source_panel.name)
+            if not source_panel.is_file() or not expected_hash or sha256_of(source_panel) != expected_hash:
+                raise PipelineError(f"Painel ausente ou alterado ao reutilizar {key[0]}/{key[1]}")
         if str(prior.get("truth") or prior.get("ground_truth_label") or "").lower() != case.ground_truth.label.value:
             raise PipelineError(f"Label divergente ao reutilizar {key[0]}/{key[1]}")
         result = BenchmarkCaseResult.from_mapping(prior)
         evaluation = attach_ground_truth(case, inference)
-        result.input_hashes = inference.input_hashes
+        result.input_hashes = prior_hashes
         result.protected_ground_truth_hashes = evaluation.protected_ground_truth_hashes
         result.extra.update(source_run_id=source_manifest.get("run_id"), inference_reused=True)
         results.append(result)

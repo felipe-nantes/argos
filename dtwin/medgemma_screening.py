@@ -15,6 +15,7 @@ from .medgemma_client import (
     build_medgemma_prompt,
     create_medgemma_client,
     load_screening_config,
+    effective_config_sha256,
     model_trace,
     validate_medgemma_report,
 )
@@ -23,6 +24,7 @@ from .medgemma_panel_multiphase import derive_texture_channels, generate_liver_p
 
 
 REPORT_FILENAME = "medgemma_report.json"
+PANEL_REPORTS_FILENAME = "medgemma_panel_reports.json"
 
 
 def build_report_envelope(
@@ -35,15 +37,27 @@ def build_report_envelope(
     screening_config_sha256: str,
     report: dict[str, Any],
     durations_seconds: dict[str, float] | None = None,
+    panel_reports: list[dict[str, Any]] | None = None,
+    aggregation_rule: str | None = None,
 ) -> dict[str, Any]:
     validated = validate_medgemma_report(report, config["report"])
-    return {
+    panels = list(panel_manifest.get("panels") or [{
+        "panel_number": 1, "panel_total": 1,
+        "image": panel_filename, "sha256": panel_manifest["panel_sha256"],
+    }])
+    envelope = {
         "case_id": case_id,
         "status": "pending_review",
         "regulatory_mode": "RESEARCH",
         **model_trace(config),
         "input_panel": panel_filename,
         "input_panel_sha256": panel_manifest["panel_sha256"],
+        "input_panels": [
+            {"image": p["image"], "sha256": p["sha256"]} for p in panels
+        ],
+        "input_panel_set_sha256": sha256_of_text(
+            "\n".join(f"{p['image']}:{p['sha256']}" for p in panels)
+        ),
         "input_volume_sha256": panel_manifest["input_volume_sha256"],
         "input_liver_mask_sha256": panel_manifest["input_liver_mask_sha256"],
         "screening_config_sha256": screening_config_sha256,
@@ -54,6 +68,90 @@ def build_report_envelope(
         "disclaimer": config["report"]["disclaimer"],
         "created_at": now_utc(),
         "durations_seconds": durations_seconds or {},
+    }
+    if panel_reports is not None:
+        envelope["panel_reports"] = panel_reports
+        envelope["aggregation_rule"] = aggregation_rule
+        envelope["coverage"] = panel_manifest.get("coverage")
+    return envelope
+
+
+def sha256_of_text(value: str) -> str:
+    import hashlib
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _authoritative_panels(panel: Any, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    records = list(manifest.get("panels") or [])
+    if not records:
+        records = [{
+            "panel_number": 1, "panel_total": 1,
+            "image": panel.panel_path.name, "sha256": manifest["panel_sha256"],
+            "axial_interval": list(manifest.get("views", {}).get("axial_indices_zyx", [None, None]))[:1]
+            + list(manifest.get("views", {}).get("axial_indices_zyx", [None, None]))[-1:],
+        }]
+    coverage = manifest.get("coverage")
+    if manifest.get("panel_strategy") == "volumetric_blocks":
+        if not isinstance(coverage, dict) or coverage.get("gate_passed") is not True:
+            raise PipelineError("Gate de cobertura volumétrica ausente ou reprovado.")
+        if int(coverage.get("covered_liver_voxels", -1)) != int(
+            coverage.get("total_liver_voxels", -2)
+        ):
+            raise PipelineError("Manifesto não demonstra cobertura hepática exata de 100%.")
+    for record in records:
+        path = panel.manifest_path.parent / str(record.get("image", ""))
+        if not path.is_file() or sha256_of(path) != record.get("sha256"):
+            raise PipelineError(f"Painel ausente ou com hash inconsistente: {path.name}")
+        record["_path"] = path
+    return records
+
+
+def _partial_prompt(base_prompt: str, record: dict[str, Any]) -> str:
+    number, total = int(record["panel_number"]), int(record["panel_total"])
+    interval = record.get("axial_interval") or ["?", "?"]
+    return (
+        f"{base_prompt}\n\nCONTEXTO DO PAINEL: painel {number}/{total}; "
+        f"intervalo axial {interval[0]} a {interval[-1]}. "
+        "Esta é uma avaliação parcial de uma cobertura volumétrica. Analise somente "
+        "as imagens deste painel e não presuma que ele representa sozinho todo o fígado."
+    )
+
+
+def _aggregate_panel_reports(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    if not entries:
+        raise PipelineError("Nenhuma resposta de painel disponível para agregação.")
+    states = [entry["report"]["resultado_hipotese"] for entry in entries]
+    if "POSITIVA" in states:
+        state = "POSITIVA"
+    elif "INCONCLUSIVA" in states:
+        state = "INCONCLUSIVA"
+    else:
+        state = "NEGATIVA"
+    determining = [e for e in entries if e["report"]["resultado_hipotese"] == state]
+    confidence_order = {"baixa": 0, "moderada": 1, "alta": 2}
+    confidence = min(
+        (e["report"]["confianca"] for e in determining),
+        key=lambda value: confidence_order[value],
+    )
+    signals: list[str] = []
+    limitations: list[str] = []
+    locations: list[str] = []
+    summaries: list[str] = []
+    for entry in entries:
+        prefix = f"Painel {entry['panel_number']}/{entry['panel_total']}"
+        report = entry["report"]
+        summaries.append(f"{prefix}: {report['resumo_do_achado']}")
+        locations.append(f"{prefix}: {report['localizacao_aproximada']}")
+        signals.extend(f"{prefix}: {item}" for item in report["sinais_visuais_observados"])
+        limitations.extend(f"{prefix}: {item}" for item in report["limitacoes_da_analise"])
+    return {
+        "resultado_hipotese": state,
+        "resumo_do_achado": " | ".join(summaries),
+        "localizacao_aproximada": " | ".join(locations),
+        "sinais_visuais_observados": signals,
+        "confianca": confidence,
+        "limitacoes_da_analise": limitations,
+        "necessidade_de_revisao_humana": True,
     }
 
 
@@ -85,7 +183,7 @@ def run_screening(
     output_dir = Path(output_dir)
     profile = load_profile(profile_path)
     config = load_screening_config(medgemma_config_path)
-    screening_config_sha256 = sha256_of(Path(medgemma_config_path))
+    screening_config_sha256 = effective_config_sha256(config)
     mode = str(config.get("panel", {}).get("mode", "single_grayscale"))
 
     panel_started = time.monotonic()
@@ -157,6 +255,7 @@ def run_screening(
         )
     panel_duration = time.monotonic() - panel_started
     panel_manifest = _read_json(panel.manifest_path, "Manifesto do painel")
+    panel_records = _authoritative_panels(panel, panel_manifest)
     result = {
         "case_id": panel_manifest["case_id"],
         "status": "panel_ready" if panel_only else "pending_model",
@@ -165,6 +264,8 @@ def run_screening(
         "report_path": None,
         "requires_human_review": True,
         "panel_sha256": panel_manifest["panel_sha256"],
+        "panel_paths": [str(record["_path"]) for record in panel_records],
+        "panel_strategy": panel_manifest.get("panel_strategy", "uniform_9"),
     }
     if panel_only:
         return result
@@ -177,14 +278,40 @@ def run_screening(
         )
     if panel_manifest.get("visible_phi_confirmed") is not True:
         raise PipelineError("O manifest do painel não registrou a confirmação visual de PHI.")
-    if sha256_of(panel.panel_path) != panel_manifest.get("panel_sha256"):
-        raise PipelineError("O painel mudou após a geração/revisão; inferência abortada.")
+    # _authoritative_panels já validou todos os hashes, não apenas o preview legado.
     prompt = build_medgemma_prompt(config)
     medgemma_client = client if client is not None else create_medgemma_client(config)
-    raw_report = medgemma_client.generate(panel.panel_path, prompt)
+    panel_reports: list[dict[str, Any]] = []
+    inference_timings: list[dict[str, Any]] = []
+    panel_reports_path = output_dir / PANEL_REPORTS_FILENAME
+    for record in panel_records:
+        panel_started_at = time.monotonic()
+        raw = medgemma_client.generate(record["_path"], _partial_prompt(prompt, record))
+        validated = validate_medgemma_report(raw, config["report"])
+        entry = {
+            "panel_number": record["panel_number"],
+            "panel_total": record["panel_total"],
+            "image": record["image"],
+            "sha256": record["sha256"],
+            "axial_interval": record.get("axial_interval"),
+            "report": validated,
+        }
+        panel_reports.append(entry)
+        inference_timings.append({
+            "panel_number": record["panel_number"],
+            "seconds": round(time.monotonic() - panel_started_at, 4),
+            **dict(getattr(medgemma_client, "last_timings", {}) or {}),
+        })
+        temp_panel_reports = output_dir / f".{PANEL_REPORTS_FILENAME}.tmp"
+        temp_panel_reports.write_text(
+            json.dumps(panel_reports, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        temp_panel_reports.replace(panel_reports_path)
+    raw_report = _aggregate_panel_reports(panel_reports)
     durations = {
         "panel_generation": round(panel_duration, 4),
-        **dict(getattr(medgemma_client, "last_timings", {}) or {}),
+        "panel_inference": inference_timings,
+        "medgemma_inference": round(sum(x["seconds"] for x in inference_timings), 4),
         "screening_total": round(time.monotonic() - total_started, 4),
     }
     envelope = build_report_envelope(
@@ -196,6 +323,11 @@ def run_screening(
         screening_config_sha256=screening_config_sha256,
         report=raw_report,
         durations_seconds=durations,
+        panel_reports=panel_reports,
+        aggregation_rule=(
+            "any_positive_else_any_inconclusive_else_all_negative; "
+            "minimum_confidence_among_determining_reports"
+        ),
     )
     report_path = output_dir / REPORT_FILENAME
     temp_path = output_dir / f".{REPORT_FILENAME}.tmp"

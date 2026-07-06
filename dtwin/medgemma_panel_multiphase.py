@@ -50,6 +50,7 @@ from .medgemma_panel import (
     _select_uniform_indices,
     _validate_case_manifest,
 )
+from .medgemma_volumetric import panel_strategy, render_volumetric_panel_set
 
 RGB_CHANNELS = ("red", "green", "blue")
 
@@ -271,11 +272,7 @@ def generate_liver_panel_multiphase(
         norm_phase[name] = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
         phase_sha256[name] = sha256_of(phase_paths[name])
 
-    axial_count = int(panel_cfg.get("axial_slices", 9))
-    if axial_count != 9:
-        raise PipelineError("O contrato atual exige exatamente 9 fatias axiais (grade 3x3).")
     axial_present = np.flatnonzero(mask.any(axis=(1, 2)))
-    axial_indices = _select_uniform_indices(axial_present, axial_count)
     centroid_zyx = np.rint(np.argwhere(mask).mean(axis=0)).astype(int)
     _zc, yc, xc = (int(v) for v in centroid_zyx)
 
@@ -296,6 +293,93 @@ def generate_liver_panel_multiphase(
 
     def fuse(sl) -> np.ndarray:
         return np.stack([norm_phase[r][sl], norm_phase[g][sl], norm_phase[b][sl]], axis=-1)
+
+    strategy = panel_strategy(panel_cfg)
+    if strategy == "volumetric_blocks":
+        offsets = (
+            int(zc_s.start or 0), int(yc_s.start or 0), int(xc_s.start or 0)
+        )
+        panel_set = render_volumetric_panel_set(
+            mask=mask,
+            output_dir=output_dir,
+            tile_size=tile_size,
+            axial_tiles_per_panel=int(panel_cfg.get("axial_tiles_per_panel", 9)),
+            index_offset_zyx=offsets,
+            render_axial=lambda z, label: _render_color_tile(
+                fuse(np.s_[z]), mask[z], label, tile_size, sy, sx,
+                contour_width, contour_color, background_dim,
+            ),
+            render_coronal=lambda y, label: _render_color_tile(
+                fuse(np.s_[:, y, :]), mask[:, y, :], label, tile_size, sz, sx,
+                contour_width, contour_color, background_dim,
+            ),
+            render_sagittal=lambda x, label: _render_color_tile(
+                fuse(np.s_[:, :, x]), mask[:, :, x], label, tile_size, sz, sy,
+                contour_width, contour_color, background_dim,
+            ),
+            notice_text=(
+                "MODO PESQUISA\n\nCobertura volumetrica RGB:\n"
+                f"R={r}  G={g}  B={b}\n\nHipotese visual apenas.\n"
+                "NAO e diagnostico.\n\nRevisao humana obrigatoria."
+            ),
+            max_image_pixels=int(screening_config["medgemma"].get("max_image_pixels", 4_000_000)),
+            max_input_bytes=int(screening_config["medgemma"]["max_input_bytes"]),
+        )
+        first_path = panel_set.panel_paths[0]
+        liver_mask_sha256 = sha256_of(liver_mask_path)
+        representative_phase = channel_map["red"]
+        manifest = {
+            "schema_version": "dtwin-medgemma-panel-set-v2",
+            "case_id": case_manifest["case_id"], "organ": expected_organ,
+            "modality": "MRI", "regulatory_mode": "RESEARCH",
+            "input_type": "mri_multiphase_rgb_fusion_liver_crop",
+            "lesion_pre_marked": False, "panel_strategy": strategy,
+            "panel_image": first_path.name, "panel_sha256": sha256_of(first_path),
+            "panel_count": 11, "panel_image_count": len(panel_set.panel_paths),
+            "total_tile_count": sum(len(p["tiles"]) for p in panel_set.panels),
+            "panels": list(panel_set.panels),
+            "input_volume_sha256": phase_sha256[representative_phase],
+            "input_phase_sha256": phase_sha256,
+            "input_liver_mask_sha256": liver_mask_sha256,
+            "fusion_channel_map": channel_map, "phases_used": required_phases,
+            "crop_to_liver": bool(panel_cfg.get("crop_to_liver", True)),
+            "crop_bounds_zyx": [[zc_s.start, zc_s.stop], [yc_s.start, yc_s.stop], [xc_s.start, xc_s.stop]]
+            if zc_s.start is not None else None,
+            "views": {
+                "axial_indices_zyx": list(panel_set.axial_indices),
+                "coronal_centroid_y": yc + offsets[1],
+                "sagittal_centroid_x": xc + offsets[2],
+            },
+            "coverage": panel_set.coverage, "liver_mask_voxels": mask_voxels,
+            "png_metadata_keys": list(panel_set.png_metadata_keys),
+            "phi_metadata_removed": True, "visible_phi_review_required": True,
+            "visible_phi_confirmed": bool(visible_phi_confirmed),
+            "created_at": now_utc(), "requires_human_review": True,
+            **model_trace,
+            "notes": [
+                "No lesion mask was read, provided, or rendered.",
+                "All liver-bearing axial slices are represented exactly once.",
+                "Phases fused into RGB channels; lesion conspicuity comes from enhancement dynamics.",
+                "Liver-only crop and windowing use the organ mask only, never a lesion mask.",
+                "Burned-in pixel PHI cannot be ruled out automatically; visual confirmation is required before inference.",
+                "Analysis is for research and education only.",
+            ],
+        }
+        manifest_path = output_dir / PANEL_MANIFEST_FILENAME
+        temp_path = output_dir / f".{PANEL_MANIFEST_FILENAME}.tmp"
+        temp_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(manifest_path)
+        return PanelResult(
+            panel_path=first_path, panel_paths=panel_set.panel_paths,
+            manifest_path=manifest_path, panel_count=11,
+            axial_indices=panel_set.axial_indices,
+            coronal_index=yc + offsets[1], sagittal_index=xc + offsets[2],
+        )
+
+    axial_count = int(panel_cfg.get("axial_slices", 9))
+    if axial_count != 9:
+        raise PipelineError("O contrato atual exige exatamente 9 fatias axiais (grade 3x3).")
+    axial_indices = _select_uniform_indices(axial_present, axial_count)
 
     tiles: list[Image.Image] = []
     for number, z in enumerate(axial_indices, start=1):
@@ -401,4 +485,5 @@ def generate_liver_panel_multiphase(
         axial_indices=axial_indices,
         coronal_index=yc,
         sagittal_index=xc,
+        panel_paths=(panel_path,),
     )

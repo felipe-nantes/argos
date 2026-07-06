@@ -268,6 +268,9 @@ def test_benchmark_case_uses_absolute_case_dir_and_scores(monkeypatch, tmp_path)
     encontra, marcando TODO exame como falha. O case_dir precisa ser absoluto."""
     import subprocess
 
+    import numpy as np
+    import SimpleITK as sitk
+
     # Reproduz produção: WORKSPACE é RELATIVO ("casos/webapp"). Sem .resolve() no
     # código, o case_dir sairia relativo — é exatamente isso que o teste captura.
     monkeypatch.chdir(tmp_path)
@@ -277,10 +280,13 @@ def test_benchmark_case_uses_absolute_case_dir_and_scores(monkeypatch, tmp_path)
     def fake_segment(series_dir, case_dir, device, timeout):
         # o bug real era o case_dir chegar relativo aqui
         seen["absolute"] = Path(case_dir).is_absolute()
-        # simula uma segmentação bem-sucedida gravando os artefatos esperados
+        # simula uma segmentação bem-sucedida gravando os artefatos esperados. A
+        # máscara é um NIfTI REAL: o webapp a lê para calcular o timeout efetivo.
         Path(case_dir).mkdir(parents=True, exist_ok=True)
-        (Path(case_dir) / "volume.nii.gz").write_bytes(b"vol")
-        (Path(case_dir) / "mask_organ.nii.gz").write_bytes(b"mask")
+        volume = sitk.GetImageFromArray(np.ones((4, 5, 6), dtype=np.float32))
+        mask = sitk.GetImageFromArray(np.ones((4, 5, 6), dtype=np.uint8))
+        sitk.WriteImage(volume, str(Path(case_dir) / "volume.nii.gz"))
+        sitk.WriteImage(mask, str(Path(case_dir) / "mask_organ.nii.gz"))
         return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
     def fake_run(cmd, timeout, cwd=None):  # a triagem MedGemma (subprocesso)

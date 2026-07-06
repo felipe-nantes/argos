@@ -49,7 +49,9 @@ from dtwin.benchmark.metrics import compute_benchmark_metrics
 from dtwin.benchmark.hashing import git_state
 from dtwin.benchmark.reporting import write_run_outputs
 from dtwin.benchmark.runner import classify_screening_failure
-from dtwin.core import sha256_of
+from dtwin.core import PipelineError, sha256_of
+from dtwin.medgemma_client import effective_config_sha256, load_screening_config
+from dtwin.medgemma_volumetric import effective_screening_timeout
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("dtwin.webapp")
@@ -61,6 +63,13 @@ VIEWER = REPO / "viewer"
 WORKSPACE = Path("casos/webapp")
 PROFILE = "profiles/figado.yaml"
 MEDGEMMA_CONFIG = os.environ.get("WEBAPP_MEDGEMMA_CONFIG", "configs/medgemma_local_4b.yaml")
+VOLUMETRIC_MEDGEMMA_CONFIG = os.environ.get(
+    "WEBAPP_VOLUMETRIC_MEDGEMMA_CONFIG", "configs/medgemma_local_4b_volumetric.yaml"
+)
+BENCHMARK_SCENARIOS = {
+    "baseline": MEDGEMMA_CONFIG,
+    "volumetric": VOLUMETRIC_MEDGEMMA_CONFIG,
+}
 HEALTH_URL = os.environ.get("WEBAPP_MEDGEMMA_HEALTH", "http://127.0.0.1:8001/health")
 MIN_SLICES = 3
 PREP_TIMEOUT_GPU = int(os.environ.get("WEBAPP_PREP_TIMEOUT_GPU", "900"))
@@ -377,9 +386,15 @@ def process_job(job_id: str, raw_dir: Path) -> None:
 
         # --- Fase 2: montagem 2D + MedGemma (subprocesso isolado) ---
         _set(job_id, step="medgemma", progress=80)
+        screening_config = load_screening_config(REPO / MEDGEMMA_CONFIG)
+        screening_timeout, _panel_count = effective_screening_timeout(
+            sitk.GetArrayFromImage(sitk.ReadImage(str(case_dir / "mask_organ.nii.gz"))) > 0,
+            screening_config,
+            SCREEN_TIMEOUT,
+        )
         scr = _run([PY, "-m", "dtwin.medgemma_screening", "--case-dir", str(case_dir),
                     "--medgemma-config", MEDGEMMA_CONFIG, "--confirm-no-visible-phi"],
-                   timeout=SCREEN_TIMEOUT)
+                   timeout=screening_timeout)
         report = _load_report(case_dir / "outputs" / "medgemma" / "medgemma_report.json")
         if report is None:
             reason = _cli_reason(scr)
@@ -418,22 +433,34 @@ def calculate_benchmark_metrics(results: list[dict]) -> dict:
     return metrics
 
 
-def _benchmark_model_info() -> dict:
+def _benchmark_config(scenario: str) -> str:
+    if scenario not in BENCHMARK_SCENARIOS:
+        raise PipelineError(f"Cenário de benchmark não autorizado: {scenario!r}")
+    configured = BENCHMARK_SCENARIOS[scenario]
+    resolved = (REPO / configured).resolve()
+    configs_root = (REPO / "configs").resolve()
+    if resolved.parent != configs_root or not resolved.is_file():
+        raise PipelineError(f"Configuração autorizada não encontrada: {configured}")
+    return configured
+
+
+def _benchmark_model_info(config_path: str | None = None) -> dict:
+    config_path = config_path or MEDGEMMA_CONFIG
     try:
-        config = yaml.safe_load((REPO / MEDGEMMA_CONFIG).read_text("utf-8")) or {}
-        model = config.get("medgemma_screening", {}).get("medgemma", {})
+        screening = load_screening_config(REPO / config_path)
+        model = screening.get("medgemma", {})
         return {
             "model_id": model.get("model_id"),
             "model_version": model.get("model_version"),
             "model_parameter_scale": model.get("model_parameter_scale"),
             "runtime": model.get("runtime", "transformers"),
             "experimental_strategy": str(
-                config.get("medgemma_screening", {}).get("panel", {}).get("mode", "single_grayscale")
+                screening.get("panel", {}).get("strategy", "uniform_9")
             ),
-            "config": MEDGEMMA_CONFIG,
+            "config": config_path,
         }
     except Exception:  # noqa: BLE001
-        return {"model_id": None, "model_version": None, "config": MEDGEMMA_CONFIG}
+        return {"model_id": None, "model_version": None, "config": config_path}
 
 
 def _run_benchmark_case(
@@ -441,6 +468,7 @@ def _run_benchmark_case(
     index: int,
     item: dict,
     raw_case_dir: Path,
+    medgemma_config: str | None = None,
 ) -> dict:
     """Executa segmentação + triagem para um exame, sem gerar a malha 3D."""
     benchmark_root = WORKSPACE / "benchmarks" / benchmark_id
@@ -463,6 +491,7 @@ def _run_benchmark_case(
         "input_hashes": {},
         "durations_seconds": {},
     }
+    medgemma_config = medgemma_config or MEDGEMMA_CONFIG
     try:
         import_started = time.monotonic()
         best_files, n = find_best_series(raw_case_dir)
@@ -490,6 +519,12 @@ def _run_benchmark_case(
         )
 
         screening_started = time.monotonic()
+        screening_config = load_screening_config(REPO / medgemma_config)
+        effective_timeout, expected_panel_count = effective_screening_timeout(
+            sitk.GetArrayFromImage(sitk.ReadImage(str(case_dir / "mask_organ.nii.gz"))) > 0,
+            screening_config,
+            SCREEN_TIMEOUT,
+        )
         screening = _run(
             [
                 PY,
@@ -498,10 +533,10 @@ def _run_benchmark_case(
                 "--case-dir",
                 str(case_dir),
                 "--medgemma-config",
-                MEDGEMMA_CONFIG,
+                medgemma_config,
                 "--confirm-no-visible-phi",
             ],
-            timeout=SCREEN_TIMEOUT,
+            timeout=effective_timeout,
         )
         envelope = _load_report(case_dir / "outputs" / "medgemma" / "medgemma_report.json")
         if envelope is None:
@@ -519,6 +554,9 @@ def _run_benchmark_case(
             "mask_organ": envelope.get("input_liver_mask_sha256"),
             "panel": envelope.get("input_panel_sha256"),
             "screening_config": envelope.get("screening_config_sha256"),
+            "panels": {
+                item["image"]: item["sha256"] for item in envelope.get("input_panels", [])
+            },
         }
         prediction = str(report.get("resultado_hipotese", "")).upper()
         if prediction not in {"POSITIVA", "NEGATIVA", "INCONCLUSIVA"}:
@@ -536,6 +574,13 @@ def _run_benchmark_case(
             panel_path=str(
                 Path("cases") / f"{index:04d}" / "outputs" / "medgemma" / str(envelope.get("input_panel") or "")
             ),
+            panel_paths=[
+                str(Path("cases") / f"{index:04d}" / "outputs" / "medgemma" / item["image"])
+                for item in envelope.get("input_panels", [])
+            ],
+            panel_strategy=screening_config.get("panel", {}).get("strategy", "uniform_9"),
+            expected_panel_count=expected_panel_count,
+            effective_screening_timeout_seconds=effective_timeout,
         )
         return base
     except subprocess.TimeoutExpired:
@@ -575,6 +620,7 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
     started_at = datetime.now(timezone.utc).isoformat()
     results: list[dict] = []
     try:
+        medgemma_config = _benchmark_config(manifest.get("scenario", "baseline"))
         _set_benchmark(benchmark_id, state="processing", started_at=started_at)
         for index, item in enumerate(cases, start=1):
             progress = 5 + int(((index - 1) / max(len(cases), 1)) * 90)
@@ -589,18 +635,20 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
                 index,
                 {"id": item["id"], "dataset": manifest["dataset_name"]},
                 raw_dir / f"{index:04d}",
+                medgemma_config,
             )
             results.append(_evaluate_benchmark_result(inference_result, item["label"]))
             _set_benchmark(benchmark_id, processed=index, progress=5 + int(index / len(cases) * 90))
 
         completed_at = datetime.now(timezone.utc).isoformat()
-        model_info = _benchmark_model_info()
+        model_info = _benchmark_model_info(medgemma_config)
         metrics = calculate_benchmark_metrics(results)
         report = {
             "schema_version": 1,
             "benchmark_id": benchmark_id,
             "dataset_name": manifest["dataset_name"],
             "dataset_kind": manifest["dataset_kind"],
+            "scenario": manifest.get("scenario", "baseline"),
             "started_at": started_at,
             "completed_at": completed_at,
             "model": model_info,
@@ -613,7 +661,7 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
         temp = benchmark_root / ".benchmark_report.json.tmp"
         temp.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         temp.replace(report_path)
-        config_path = (REPO / MEDGEMMA_CONFIG).resolve()
+        config_path = (REPO / medgemma_config).resolve()
         run_manifest = {
             "schema_version": 1,
             "run_id": benchmark_id,
@@ -621,8 +669,10 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
             **git_state(REPO),
             "model_family": "MedGemma",
             **model_info,
-            "medgemma_config_path": MEDGEMMA_CONFIG,
-            "medgemma_config_hash": sha256_of(config_path) if config_path.is_file() else None,
+            "medgemma_config_path": medgemma_config,
+            "medgemma_config_hash": effective_config_sha256(
+                load_screening_config(config_path)
+            ) if config_path.is_file() else None,
             "dataset_names": [manifest["dataset_name"]],
             "num_cases_total": len(cases),
             "num_cases_positive": sum(item["label"] == "positive" for item in cases),
@@ -668,11 +718,14 @@ def _parse_benchmark_manifest(raw: str, file_count: int) -> dict:
         raise HTTPException(status_code=400, detail="Manifesto do benchmark inválido.")
     dataset_name = str(manifest.get("dataset_name") or "").strip()[:120]
     dataset_kind = manifest.get("dataset_kind")
+    scenario = str(manifest.get("scenario") or "baseline")
     cases = manifest.get("cases")
     if not dataset_name:
         raise HTTPException(status_code=400, detail="Informe o nome do dataset.")
     if dataset_kind not in {"positive", "negative", "mixed"}:
         raise HTTPException(status_code=400, detail="Tipo de dataset inválido.")
+    if scenario not in BENCHMARK_SCENARIOS:
+        raise HTTPException(status_code=400, detail="Cenário de benchmark inválido.")
     if not isinstance(cases, list) or not cases:
         raise HTTPException(status_code=400, detail="Nenhum exame foi identificado no dataset.")
 
@@ -706,7 +759,10 @@ def _parse_benchmark_manifest(raw: str, file_count: int) -> dict:
         normalized.append({"id": case_id, "label": label, "file_indices": clean_indices})
     if seen_files != set(range(file_count)):
         raise HTTPException(status_code=400, detail="Todos os arquivos devem pertencer a um exame.")
-    return {"dataset_name": dataset_name, "dataset_kind": dataset_kind, "cases": normalized}
+    return {
+        "dataset_name": dataset_name, "dataset_kind": dataset_kind,
+        "scenario": scenario, "cases": normalized,
+    }
 
 
 def _benchmark_csv(report: dict) -> str:
