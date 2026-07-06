@@ -254,6 +254,13 @@ O ganho é honestidade estatística: recupera respostas reais que a checagem est
 descartava — inclusive respostas *erradas* do modelo, que assim deixam de se
 esconder como "erro de formato".
 
+## Benchmark auditável
+
+O núcleo compartilhado e a CLI da Etapa 0 estão documentados em
+`benchmarks/README.md`. O benchmark separa métricas primárias all-cases das
+secundárias decisions-only, exige sensibilidade e especificidade de 75% no gate e
+mantém labels/máscaras de lesão fora do subprocesso de inferência.
+
 ## Limitações
 
 - Uma montagem 2D perde informação do volume 3D completo.

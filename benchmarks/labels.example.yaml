@@ -1,0 +1,16 @@
+cases:
+  - case_id: case_001
+    label: POSITIVE
+    inference:
+      volume: sub-001/anat/sub-001_T1w.nii.gz
+      organ_mask: derivatives/liver_masks/sub-001_liver.nii.gz
+    ground_truth:
+      lesion_mask: derivatives/lesion_masks/sub-001_lesion.nii.gz
+      annotation_manifest: derivatives/annotations/sub-001.json
+
+  - case_id: case_002
+    label: NEGATIVE
+    inference:
+      dicom_dir: case_002/dicom
+      # Se organ_mask não for informado, use segment_if_missing no experimento.
+    ground_truth: {}

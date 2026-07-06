@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ def build_report_envelope(
     panel_manifest: dict[str, Any],
     screening_config_sha256: str,
     report: dict[str, Any],
+    durations_seconds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     validated = validate_medgemma_report(report, config["report"])
     return {
@@ -51,6 +53,7 @@ def build_report_envelope(
         "requires_human_review": True,
         "disclaimer": config["report"]["disclaimer"],
         "created_at": now_utc(),
+        "durations_seconds": durations_seconds or {},
     }
 
 
@@ -77,6 +80,7 @@ def run_screening(
     visible_phi_confirmed: bool = False,
     client: Any | None = None,
 ) -> dict[str, Any]:
+    total_started = time.monotonic()
     liver_mask_path = Path(liver_mask_path)
     output_dir = Path(output_dir)
     profile = load_profile(profile_path)
@@ -84,6 +88,7 @@ def run_screening(
     screening_config_sha256 = sha256_of(Path(medgemma_config_path))
     mode = str(config.get("panel", {}).get("mode", "single_grayscale"))
 
+    panel_started = time.monotonic()
     if mode == "multiphase_fusion":
         if not phase_paths:
             raise PipelineError(
@@ -150,6 +155,7 @@ def run_screening(
             model_trace=model_trace(config),
             visible_phi_confirmed=visible_phi_confirmed,
         )
+    panel_duration = time.monotonic() - panel_started
     panel_manifest = _read_json(panel.manifest_path, "Manifesto do painel")
     result = {
         "case_id": panel_manifest["case_id"],
@@ -176,6 +182,11 @@ def run_screening(
     prompt = build_medgemma_prompt(config)
     medgemma_client = client if client is not None else create_medgemma_client(config)
     raw_report = medgemma_client.generate(panel.panel_path, prompt)
+    durations = {
+        "panel_generation": round(panel_duration, 4),
+        **dict(getattr(medgemma_client, "last_timings", {}) or {}),
+        "screening_total": round(time.monotonic() - total_started, 4),
+    }
     envelope = build_report_envelope(
         case_id=panel_manifest["case_id"],
         config=config,
@@ -184,6 +195,7 @@ def run_screening(
         panel_manifest=panel_manifest,
         screening_config_sha256=screening_config_sha256,
         report=raw_report,
+        durations_seconds=durations,
     )
     report_path = output_dir / REPORT_FILENAME
     temp_path = output_dir / f".{REPORT_FILENAME}.tmp"

@@ -158,6 +158,10 @@ nada.
 - Benchmark: `http://127.0.0.1:8080/benchmark.html`. Arraste um dataset rotulado
   (uma subpasta por exame) e obtenha a matriz de confusão e as métricas.
 
+Para runs auditáveis por CLI, importação NIfTI/MIDS, dry-run, isolamento de ground
+truth e reprodução por commit/config/hash, consulte
+[`benchmarks/README.md`](benchmarks/README.md).
+
 ## Adicionar um novo órgão (por exemplo, baço)
 
 1. Copie `profiles/figado.yaml` para `profiles/baco.yaml`.

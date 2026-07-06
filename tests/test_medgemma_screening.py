@@ -57,6 +57,8 @@ def test_full_flow_persists_traceable_pending_review_report(synthetic_case, tmp_
     assert len(report["input_volume_sha256"]) == 64
     assert len(report["input_liver_mask_sha256"]) == 64
     assert len(report["screening_config_sha256"]) == 64
+    assert report["durations_seconds"]["panel_generation"] >= 0
+    assert report["durations_seconds"]["screening_total"] >= 0
 
 
 def test_full_flow_requires_visible_phi_confirmation(synthetic_case, tmp_path):

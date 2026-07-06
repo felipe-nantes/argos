@@ -123,7 +123,8 @@ const ci=(m,key)=>{const v=m.confidence_intervals_95?.[key];return v?`IC 95% ${p
 function metric(label,value,detail,cls=''){return`<div class="metric ${cls}"><div class="k">${label}</div><div class="v">${value}</div><div class="d">${detail}</div></div>`}
 function renderReport(report){show($('#progressCard'),false);const card=$('#reportCard');show(card,true);const m=report.metrics,cm=m.confusion_matrix;
   const rows=report.cases.map(c=>{const state=c.status==='decisive'?(c.correct?'s-ok':'s-bad'):c.status==='inconclusive'?'s-inc':'s-bad';
-    const label=c.status==='failed'?'FALHA':c.status==='inconclusive'?'INCONCLUSIVO':c.correct?'CORRETO':'INCORRETO';return`<tr><td>${esc(c.case_id)}</td><td>${c.truth==='positive'?'Positivo':'Negativo'}</td><td>${esc(c.prediction||'—')}</td><td><span class="status ${state}">${label}</span></td><td>${esc(c.confidence||'—')}</td><td>${c.duration_seconds}s</td></tr>`}).join('');
+    const technical={failed:'FALHA',failure:'FALHA',timeout:'TIMEOUT',invalid_response:'RESPOSTA INVÁLIDA'};
+    const label=technical[c.status]||(c.status==='inconclusive'?'INCONCLUSIVO':c.correct?'CORRETO':'INCORRETO');return`<tr><td>${esc(c.case_id)}</td><td>${c.truth==='positive'?'Positivo':'Negativo'}</td><td>${esc(c.prediction||'—')}</td><td><span class="status ${state}">${label}</span></td><td>${esc(c.confidence||'—')}</td><td>${c.duration_seconds}s</td></tr>`}).join('');
   const gate=m.target?.met===true?'<span class="status s-ok">META 75% ATINGIDA</span>':'<span class="status s-bad">META 75% NÃO ATINGIDA</span>';
   card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · ${esc(report.model.model_version||report.model.model_id||'MedGemma')} · ${gate}</div></div>
     <div class="download"><a href="/api/benchmarks/${currentBenchmark}/report.json">Baixar JSON</a><a href="/api/benchmarks/${currentBenchmark}/report.csv">Baixar CSV</a></div></div>

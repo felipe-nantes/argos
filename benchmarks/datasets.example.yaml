@@ -1,0 +1,16 @@
+# Exemplo versionável. Manifests reais e datasets ficam sob casos/ ou fora do Git.
+datasets:
+  - name: TCGA-LIHC
+    format: DICOM
+    root: ../casos/datasets/tcga-lihc
+    labels_manifest: ../casos/benchmark_manifests/tcga_lihc_labels.yaml
+
+  - name: CHAOS
+    format: DICOM
+    root: ../casos/datasets/chaos
+    labels_manifest: ../casos/benchmark_manifests/chaos_labels.yaml
+
+  - name: OpenSwissHCC
+    format: MIDS
+    root: ../casos/datasets/openswisshcc
+    labels_manifest: ../casos/benchmark_manifests/openswisshcc_labels.yaml

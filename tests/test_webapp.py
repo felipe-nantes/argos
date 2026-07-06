@@ -303,7 +303,8 @@ def test_benchmark_case_uses_absolute_case_dir_and_scores(monkeypatch, tmp_path)
         dcm_files.append(str(f))
     monkeypatch.setattr(server, "find_best_series", lambda d: (dcm_files, 3))
 
-    result = server._run_benchmark_case("bench01", 1, {"id": "c1", "label": "positive"}, raw_case)
+    inference_result = server._run_benchmark_case("bench01", 1, {"id": "c1"}, raw_case)
+    result = server._evaluate_benchmark_result(inference_result, "positive")
 
     assert seen["absolute"] is True, "case_dir passado à segmentação deve ser absoluto"
     assert result["status"] == "decisive"
@@ -355,3 +356,35 @@ def test_benchmark_report_downloads_json_and_csv(monkeypatch, tmp_path):
     assert csv_response.status_code == 200
     assert "case_id,truth,prediction" in csv_response.text
     assert "caso-a,positive,POSITIVA" in csv_response.text
+
+
+def test_web_benchmark_persists_auditable_run_outputs(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "WORKSPACE", tmp_path)
+    def fake_inference(*args, **kwargs):
+        assert "label" not in args[2]
+        return {
+            "case_id": "caso-a", "dataset": "coorte", "input_format": "DICOM",
+            "prediction": "POSITIVA", "status": "decisive",
+            "confidence": "alta", "duration_seconds": 1.25, "error": None,
+        }
+
+    monkeypatch.setattr(server, "_run_benchmark_case", fake_inference)
+    benchmark_id = "abc999"
+    raw = tmp_path / "benchmarks" / benchmark_id / "_upload"
+    raw.mkdir(parents=True)
+    with server._lock:
+        server._benchmarks[benchmark_id] = {
+            "state": "queued", "progress": 0, "processed": 0, "total": 1,
+            "current_case": None, "report": None, "error": None,
+        }
+    server.process_benchmark(benchmark_id, {
+        "dataset_name": "coorte", "dataset_kind": "positive",
+        "cases": [{"id": "caso-a", "label": "positive", "file_indices": [0]}],
+    }, raw)
+    root = tmp_path / "benchmarks" / benchmark_id
+    for name in (
+        "run_manifest.json", "cases.jsonl", "metrics_primary.json",
+        "metrics_decisions_only.json", "confusion_matrices.json", "summary.md",
+    ):
+        assert (root / name).is_file(), name
+    assert server._benchmarks[benchmark_id]["state"] == "done"

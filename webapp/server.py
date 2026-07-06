@@ -22,8 +22,8 @@ import csv
 import io
 import json
 import logging
-import math
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -44,6 +44,12 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import FormData
+
+from dtwin.benchmark.metrics import compute_benchmark_metrics
+from dtwin.benchmark.hashing import git_state
+from dtwin.benchmark.reporting import write_run_outputs
+from dtwin.benchmark.runner import classify_screening_failure
+from dtwin.core import sha256_of
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("dtwin.webapp")
@@ -405,109 +411,11 @@ def process_job(job_id: str, raw_dir: Path) -> None:
         shutil.rmtree(WORKSPACE / job_id / "_series", ignore_errors=True)
 
 
-def _wilson_interval(successes: int, total: int) -> dict | None:
-    """Intervalo binomial de Wilson de 95%, inclusive para amostras pequenas."""
-    if total <= 0:
-        return None
-    z = 1.959963984540054
-    proportion = successes / total
-    denominator = 1 + z * z / total
-    centre = (proportion + z * z / (2 * total)) / denominator
-    margin = (
-        z
-        * math.sqrt(
-            proportion * (1 - proportion) / total + z * z / (4 * total * total)
-        )
-        / denominator
-    )
-    return {
-        "low": round(max(0.0, centre - margin), 4),
-        "high": round(min(1.0, centre + margin), 4),
-    }
-
-
 def calculate_benchmark_metrics(results: list[dict]) -> dict:
-    """Calcula o resultado conservador e métricas diagnósticas do benchmark.
-
-    A métrica principal usa todos os exames rotulados. Um positivo só acerta com
-    POSITIVA e um negativo só acerta com NEGATIVA; INCONCLUSIVA e falha contam
-    como erro. ``decisive_only`` preserva a leitura restrita às classificações
-    binárias, sem permitir que ela infle o gate principal de 75%.
-    """
-    total = len(results)
-    reports = [r for r in results if r.get("status") in {"decisive", "inconclusive"}]
-    decisive = [r for r in results if r.get("status") == "decisive"]
-    positive_total = sum(r.get("truth") == "positive" for r in results)
-    negative_total = sum(r.get("truth") == "negative" for r in results)
-    tp = sum(r.get("truth") == "positive" and r.get("prediction") == "POSITIVA" for r in decisive)
-    tn = sum(r.get("truth") == "negative" and r.get("prediction") == "NEGATIVA" for r in decisive)
-    fn = positive_total - tp
-    fp = negative_total - tn
-    decisive_fp = sum(
-        r.get("truth") == "negative" and r.get("prediction") == "POSITIVA"
-        for r in decisive
-    )
-    decisive_fn = sum(
-        r.get("truth") == "positive" and r.get("prediction") == "NEGATIVA"
-        for r in decisive
-    )
-    inconclusive = sum(r.get("status") == "inconclusive" for r in results)
-    failed = sum(r.get("status") == "failed" for r in results)
-
-    def ratio(num: int, den: int) -> float | None:
-        return round(num / den, 4) if den else None
-
-    sensitivity = ratio(tp, positive_total)
-    specificity = ratio(tn, negative_total)
-    target_value = 0.75
-    target_met = bool(
-        sensitivity is not None
-        and specificity is not None
-        and sensitivity >= target_value
-        and specificity >= target_value
-    )
-
-    return {
-        "scoring_policy": "inconclusive_and_failed_count_as_errors",
-        "total_cases": total,
-        "positive_cases": positive_total,
-        "negative_cases": negative_total,
-        "completed_reports": len(reports),
-        "decisive_cases": len(decisive),
-        "inconclusive_cases": inconclusive,
-        "failed_cases": failed,
-        "completion_rate": ratio(len(reports), total),
-        "coverage_rate": ratio(len(decisive), total),
-        "inconclusive_rate": ratio(inconclusive, total),
-        "failure_rate": ratio(failed, total),
-        "confusion_matrix": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
-        "accuracy": ratio(tp + tn, total),
-        "sensitivity": sensitivity,
-        "specificity": specificity,
-        "precision": ratio(tp, tp + fp),
-        "f1_score": ratio(2 * tp, 2 * tp + fp + fn),
-        "confidence_intervals_95": {
-            "accuracy": _wilson_interval(tp + tn, total),
-            "sensitivity": _wilson_interval(tp, positive_total),
-            "specificity": _wilson_interval(tn, negative_total),
-        },
-        "target": {
-            "minimum_sensitivity": target_value,
-            "minimum_specificity": target_value,
-            "met": target_met,
-        },
-        "decisive_only": {
-            "confusion_matrix": {
-                "tp": tp,
-                "tn": tn,
-                "fp": decisive_fp,
-                "fn": decisive_fn,
-            },
-            "accuracy": ratio(tp + tn, tp + tn + decisive_fp + decisive_fn),
-            "sensitivity": ratio(tp, tp + decisive_fn),
-            "specificity": ratio(tn, tn + decisive_fp),
-        },
-    }
+    """Adaptador retrocompatível para o núcleo compartilhado do benchmark."""
+    metrics = compute_benchmark_metrics(results)
+    metrics["scoring_policy"] = "inconclusive_and_failed_count_as_errors"
+    return metrics
 
 
 def _benchmark_model_info() -> dict:
@@ -518,6 +426,10 @@ def _benchmark_model_info() -> dict:
             "model_id": model.get("model_id"),
             "model_version": model.get("model_version"),
             "model_parameter_scale": model.get("model_parameter_scale"),
+            "runtime": model.get("runtime", "transformers"),
+            "experimental_strategy": str(
+                config.get("medgemma_screening", {}).get("panel", {}).get("mode", "single_grayscale")
+            ),
             "config": MEDGEMMA_CONFIG,
         }
     except Exception:  # noqa: BLE001
@@ -542,14 +454,17 @@ def _run_benchmark_case(
     started = time.monotonic()
     base = {
         "case_id": item["id"],
-        "truth": item["label"],
+        "dataset": item.get("dataset", "web_upload"),
+        "input_format": "DICOM",
         "prediction": None,
         "confidence": None,
-        "correct": None,
         "status": "failed",
         "error": None,
+        "input_hashes": {},
+        "durations_seconds": {},
     }
     try:
+        import_started = time.monotonic()
         best_files, n = find_best_series(raw_case_dir)
         if not best_files or n < MIN_SLICES:
             base["error"] = "Nenhuma série DICOM de RM válida foi encontrada."
@@ -558,7 +473,9 @@ def _run_benchmark_case(
         series_dir.mkdir(parents=True, exist_ok=True)
         for file_index, source in enumerate(best_files):
             shutil.copyfile(source, series_dir / f"{file_index:05d}_{os.path.basename(source)}")
+        base["durations_seconds"]["import"] = round(time.monotonic() - import_started, 4)
 
+        preparation_started = time.monotonic()
         prep = _segment(str(series_dir.resolve()), case_dir, "gpu", PREP_TIMEOUT_GPU)
         if not _seg_done(case_dir):
             reason = _cli_reason(prep)
@@ -568,7 +485,11 @@ def _run_benchmark_case(
             if not _seg_done(case_dir):
                 base["error"] = _friendly_text(_cli_reason(prep))
                 return base
+        base["durations_seconds"]["preparation_and_segmentation"] = round(
+            time.monotonic() - preparation_started, 4
+        )
 
+        screening_started = time.monotonic()
         screening = _run(
             [
                 PY,
@@ -585,24 +506,41 @@ def _run_benchmark_case(
         envelope = _load_report(case_dir / "outputs" / "medgemma" / "medgemma_report.json")
         if envelope is None:
             base["error"] = _friendly_text(_cli_reason(screening))
+            base["status"] = classify_screening_failure(_cli_reason(screening)).value
             return base
 
         report = envelope["report"]
+        base["durations_seconds"].update(envelope.get("durations_seconds") or {})
+        base["durations_seconds"]["screening_subprocess"] = round(
+            time.monotonic() - screening_started, 4
+        )
+        base["input_hashes"] = {
+            "volume": envelope.get("input_volume_sha256"),
+            "mask_organ": envelope.get("input_liver_mask_sha256"),
+            "panel": envelope.get("input_panel_sha256"),
+            "screening_config": envelope.get("screening_config_sha256"),
+        }
         prediction = str(report.get("resultado_hipotese", "")).upper()
         if prediction not in {"POSITIVA", "NEGATIVA", "INCONCLUSIVA"}:
             base["error"] = "O relatório retornou uma classificação inválida."
+            base["status"] = "invalid_response"
             return base
-        expected = "POSITIVA" if item["label"] == "positive" else "NEGATIVA"
         base.update(
             prediction=prediction,
             confidence=report.get("confianca"),
-            correct=(prediction == expected) if prediction != "INCONCLUSIVA" else None,
             status="inconclusive" if prediction == "INCONCLUSIVA" else "decisive",
             report_summary=report.get("resumo_do_achado"),
+            report_path=str(
+                Path("cases") / f"{index:04d}" / "outputs" / "medgemma" / "medgemma_report.json"
+            ),
+            panel_path=str(
+                Path("cases") / f"{index:04d}" / "outputs" / "medgemma" / str(envelope.get("input_panel") or "")
+            ),
         )
         return base
     except subprocess.TimeoutExpired:
         base["error"] = "O processamento excedeu o tempo limite."
+        base["status"] = "timeout"
         return base
     except Exception as exc:  # noqa: BLE001
         log.exception("Benchmark %s/%s: falha inesperada", benchmark_id, item["id"])
@@ -610,7 +548,25 @@ def _run_benchmark_case(
         return base
     finally:
         base["duration_seconds"] = round(time.monotonic() - started, 2)
+        base["durations_seconds"]["total"] = round(time.monotonic() - started, 4)
         shutil.rmtree(series_dir, ignore_errors=True)
+
+
+def _evaluate_benchmark_result(inference_result: dict, label: str) -> dict:
+    """Anexa o ground truth somente após a inferência ter encerrado."""
+    started = time.monotonic()
+    result = dict(inference_result)
+    expected = "POSITIVA" if label == "positive" else "NEGATIVA"
+    prediction = result.get("prediction")
+    result.update(
+        truth=label,
+        correct=(prediction == expected) if prediction in {"POSITIVA", "NEGATIVA"} else None,
+        protected_ground_truth_hashes={"lesion_mask": None, "annotation_manifest": None},
+    )
+    durations = dict(result.get("durations_seconds") or {})
+    durations["evaluation"] = round(time.monotonic() - started, 4)
+    result["durations_seconds"] = durations
+    return result
 
 
 def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
@@ -628,20 +584,27 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
                 processed=index - 1,
                 progress=progress,
             )
-            results.append(
-                _run_benchmark_case(benchmark_id, index, item, raw_dir / f"{index:04d}")
+            inference_result = _run_benchmark_case(
+                benchmark_id,
+                index,
+                {"id": item["id"], "dataset": manifest["dataset_name"]},
+                raw_dir / f"{index:04d}",
             )
+            results.append(_evaluate_benchmark_result(inference_result, item["label"]))
             _set_benchmark(benchmark_id, processed=index, progress=5 + int(index / len(cases) * 90))
 
+        completed_at = datetime.now(timezone.utc).isoformat()
+        model_info = _benchmark_model_info()
+        metrics = calculate_benchmark_metrics(results)
         report = {
             "schema_version": 1,
             "benchmark_id": benchmark_id,
             "dataset_name": manifest["dataset_name"],
             "dataset_kind": manifest["dataset_kind"],
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "model": _benchmark_model_info(),
-            "metrics": calculate_benchmark_metrics(results),
+            "completed_at": completed_at,
+            "model": model_info,
+            "metrics": metrics,
             "cases": results,
             "disclaimer": DISCLAIMER,
         }
@@ -650,6 +613,32 @@ def process_benchmark(benchmark_id: str, manifest: dict, raw_dir: Path) -> None:
         temp = benchmark_root / ".benchmark_report.json.tmp"
         temp.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         temp.replace(report_path)
+        config_path = (REPO / MEDGEMMA_CONFIG).resolve()
+        run_manifest = {
+            "schema_version": 1,
+            "run_id": benchmark_id,
+            "created_at": started_at,
+            **git_state(REPO),
+            "model_family": "MedGemma",
+            **model_info,
+            "medgemma_config_path": MEDGEMMA_CONFIG,
+            "medgemma_config_hash": sha256_of(config_path) if config_path.is_file() else None,
+            "dataset_names": [manifest["dataset_name"]],
+            "num_cases_total": len(cases),
+            "num_cases_positive": sum(item["label"] == "positive" for item in cases),
+            "num_cases_negative": sum(item["label"] == "negative" for item in cases),
+            "started_at": started_at,
+            "finished_at": completed_at,
+            "duration_seconds_total": round(
+                sum(float(item.get("duration_seconds") or 0) for item in results), 4
+            ),
+            "environment": {
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+            },
+            "research_only": True,
+        }
+        write_run_outputs(benchmark_root, run_manifest, results, metrics)
         _set_benchmark(
             benchmark_id,
             state="done",

@@ -1,0 +1,10 @@
+name: current_panel
+profile_path: profiles/figado.yaml
+timeout_seconds: 900
+segment_if_missing: false
+device: gpu
+visible_phi_confirmed: false
+final_evaluation: false
+gate:
+  minimum_sensitivity: 0.75
+  minimum_specificity: 0.75

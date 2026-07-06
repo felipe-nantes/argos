@@ -383,6 +383,7 @@ class HTTPJSONMedGemmaClient:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self.med = config["medgemma"]
+        self.last_timings: dict[str, float] = {}
 
     def _ensure_ready(self) -> None:
         if not _bool(self.med.get("enabled", False), "medgemma.enabled"):
@@ -455,6 +456,7 @@ class HTTPJSONMedGemmaClient:
         }
 
     def generate(self, panel_path: Path, prompt: str) -> dict[str, Any]:
+        total_started = time.monotonic()
         self._ensure_ready()
         panel_path = Path(panel_path)
         if not panel_path.is_file():
@@ -464,7 +466,9 @@ class HTTPJSONMedGemmaClient:
             raise PipelineError(
                 f"Painel excede max_input_bytes ({len(panel_bytes)} > {self.med['max_input_bytes']})."
             )
+        ready_started = time.monotonic()
         self.check_ready()
+        self.last_timings = {"backend_readiness": round(time.monotonic() - ready_started, 4)}
         payload = {
             "contract": "dtwin-medgemma-v1",
             "model_id": self.med["model_id"],
@@ -484,6 +488,7 @@ class HTTPJSONMedGemmaClient:
         )
         attempts = int(self.med["max_retries"]) + 1
         last_error: Exception | None = None
+        inference_started = time.monotonic()
         for attempt in range(attempts):
             try:
                 with urlopen(request, timeout=int(self.med["timeout_seconds"])) as response:
@@ -503,6 +508,7 @@ class HTTPJSONMedGemmaClient:
             raise PipelineError(
                 f"Falha ao chamar backend MedGemma após {attempts} tentativa(s): {last_error}"
             ) from last_error
+        self.last_timings["medgemma_inference"] = round(time.monotonic() - inference_started, 4)
         if not isinstance(decoded, dict):
             raise PipelineError("Resposta do backend MedGemma deve ser um objeto JSON.")
         response_model_id = decoded.get("model_id")
@@ -512,7 +518,11 @@ class HTTPJSONMedGemmaClient:
                 "Backend não confirmou exatamente o modelo configurado; relatório descartado."
             )
         raw_report = decoded.get("report", decoded.get("output"))
-        return validate_medgemma_report(raw_report, self.config["report"])
+        validation_started = time.monotonic()
+        validated = validate_medgemma_report(raw_report, self.config["report"])
+        self.last_timings["response_validation"] = round(time.monotonic() - validation_started, 4)
+        self.last_timings["client_total"] = round(time.monotonic() - total_started, 4)
+        return validated
 
 
 def create_medgemma_client(config: dict[str, Any]) -> HTTPJSONMedGemmaClient:

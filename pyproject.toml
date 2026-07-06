@@ -49,7 +49,7 @@ digital-twin = "digital_twin:main"
 
 [tool.setuptools]
 py-modules = ["digital_twin"]
-packages = ["dtwin"]
+packages = ["dtwin", "dtwin.benchmark"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
