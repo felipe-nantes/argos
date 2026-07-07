@@ -14,7 +14,7 @@
       <div><p class="brand-name">Argos</p><p class="brand-subtitle">Digital Twin Cirúrgico · UEM · GETS · HU</p></div>
     </div>
     <nav class="app-nav" aria-label="Navegação principal"><a href="/">Exame individual</a><a class="active" href="/benchmark.html">Benchmark</a></nav>
-    <div class="header-context"><span class="research-pill">Modo Pesquisa</span></div>
+    <div class="header-context"><span class="status" id="backendStatus" title="Estado do modelo MedGemma">Verificando backend…</span><span class="research-pill">Modo Pesquisa</span></div>
   </header>
 
   <main class="page benchmark-page">
@@ -32,11 +32,15 @@
         <div class="section-title"><span class="num">1</span><div><h3>Descreva o dataset</h3><div class="hint">Defina a referência esperada para os exames.</div></div></div>
         <label class="caption" for="datasetName">Nome do dataset</label>
         <input id="datasetName" type="text" maxlength="120" placeholder="Ex.: Validação hepática — lote 01" />
-        <label class="caption" for="scenario">Cenário do painel</label>
-        <select id="scenario">
-          <option value="baseline">Baseline — 9 cortes uniformes</option>
-          <option value="volumetric">Cenário B — cobertura volumétrica</option>
-        </select>
+        <label class="caption">Forma de execução</label>
+        <div class="scenario-toggle" id="scenarioToggle" role="group" aria-label="Forma de execução do benchmark">
+          <button type="button" class="scenario-btn active" data-scenario="baseline" aria-pressed="true">
+            <b>Baseline</b><span>9 cortes axiais uniformes (rápido)</span>
+          </button>
+          <button type="button" class="scenario-btn" data-scenario="volumetric" aria-pressed="false">
+            <b>Volumétrico</b><span>Cobertura de 100% do fígado</span>
+          </button>
+        </div>
         <div class="types">
           <label class="type"><input type="radio" name="kind" value="positive"><b>Positivo</b><span>Todos os exames são alterados.</span></label>
           <label class="type"><input type="radio" name="kind" value="negative"><b>Negativo</b><span>Todos os exames são normais.</span></label>
@@ -75,9 +79,28 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);const show=(e,on=true)=>e.classList.toggle('hidden',!on);
-let uploadedItems=[],detectedCases=[],pollTimer=null,currentBenchmark=null;
+let uploadedItems=[],detectedCases=[],pollTimer=null,currentBenchmark=null,selectedScenario='baseline',backendReady=false;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function selectedKind(){return document.querySelector('input[name=kind]:checked').value}
+const SCENARIO_LABEL={baseline:'Baseline (9 cortes)',volumetric:'Volumétrico (100%)'};
+
+// --- Toggle de cenario (baseline x volumetrico) ---
+document.querySelectorAll('.scenario-btn').forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll('.scenario-btn').forEach(b=>{const on=b===btn;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on)});
+  selectedScenario=btn.dataset.scenario;
+});
+
+// --- Estado do backend MedGemma (benchmark invalido se o modelo nao estiver pronto) ---
+async function refreshBackend(){
+  try{const r=await fetch('/api/health');const d=await r.json();backendReady=d.backend==='pronto';
+    const el=$('#backendStatus');
+    if(d.backend==='pronto'){el.textContent='Backend pronto';el.className='status s-ok';}
+    else if(d.backend==='carregando'){el.textContent='Backend carregando…';el.className='status s-inc';}
+    else{el.textContent='Backend desligado';el.className='status s-bad';}
+  }catch{backendReady=false;const el=$('#backendStatus');el.textContent='Backend desligado';el.className='status s-bad';}
+  validate();
+}
+refreshBackend();setInterval(refreshBackend,5000);
 async function readDirectory(reader){let all=[];for(;;){const batch=await new Promise((res,rej)=>reader.readEntries(res,rej));if(!batch.length)return all;all=all.concat(batch)}}
 async function entryFiles(entry,base,out){if(entry.isFile){await new Promise(res=>entry.file(f=>{out.push({file:f,rel:base+entry.name});res()}));return}
   for(const child of await readDirectory(entry.createReader()))await entryFiles(child,base+entry.name+'/',out)}
@@ -113,8 +136,15 @@ $('#drop').onclick=()=>$('#folderInput').click();$('#folderInput').onchange=e=>l
 ['dragleave','drop'].forEach(ev=>$('#drop').addEventListener(ev,e=>{e.preventDefault();$('#drop').classList.remove('hot')}));
 $('#drop').addEventListener('drop',async e=>loadItems(await fromDrop(e.dataTransfer)));
 $('#startBtn').onclick=async()=>{
-  validate();if($('#startBtn').disabled)return;$('#startBtn').disabled=true;show($('#setupCard'),false);show($('#uploadCard'),false);show($('#progressCard'),true);
-  const manifest={dataset_name:$('#datasetName').value.trim(),dataset_kind:selectedKind(),scenario:$('#scenario').value,cases:detectedCases};const fd=new FormData();
+  validate();if($('#startBtn').disabled)return;
+  // Validade: nao inicia um benchmark inteiro contra um backend desligado (todos
+  // os exames falhariam). Reconfirma o estado do modelo no momento do clique.
+  await refreshBackend();
+  if(!backendReady){show($('#setupCard'),false);show($('#uploadCard'),false);
+    renderError('O modelo MedGemma não está pronto (backend desligado ou carregando). Suba o gateway e aguarde "Backend pronto" antes de iniciar o benchmark.');return;}
+  $('#startBtn').disabled=true;show($('#setupCard'),false);show($('#uploadCard'),false);show($('#progressCard'),true);
+  $('#currentCase').textContent=`Preparando dataset (${SCENARIO_LABEL[selectedScenario]})…`;
+  const manifest={dataset_name:$('#datasetName').value.trim(),dataset_kind:selectedKind(),scenario:selectedScenario,cases:detectedCases};const fd=new FormData();
   uploadedItems.forEach(x=>fd.append('files',x.file,x.file.name));fd.append('manifest',JSON.stringify(manifest));
   try{const res=await fetch('/api/benchmarks',{method:'POST',body:fd});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Falha no envio.');
     currentBenchmark=data.benchmark_id;$('#processed').textContent=`0 / ${data.total_cases}`;pollBenchmark()}
@@ -131,7 +161,8 @@ function renderReport(report){show($('#progressCard'),false);const card=$('#repo
     const technical={failed:'FALHA',failure:'FALHA',timeout:'TIMEOUT',invalid_response:'RESPOSTA INVÁLIDA'};
     const label=technical[c.status]||(c.status==='inconclusive'?'INCONCLUSIVO':c.correct?'CORRETO':'INCORRETO');return`<tr><td>${esc(c.case_id)}</td><td>${c.truth==='positive'?'Positivo':'Negativo'}</td><td>${esc(c.prediction||'—')}</td><td><span class="status ${state}">${label}</span></td><td>${esc(c.confidence||'—')}</td><td>${c.duration_seconds}s</td></tr>`}).join('');
   const gate=m.target?.met===true?'<span class="status s-ok">META 75% ATINGIDA</span>':'<span class="status s-bad">META 75% NÃO ATINGIDA</span>';
-  card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · ${esc(report.model.model_version||report.model.model_id||'MedGemma')} · ${gate}</div></div>
+  const scenarioName=SCENARIO_LABEL[report.scenario]||report.scenario||'—';
+  card.innerHTML=`<div class="report-head"><div><h3>${esc(report.dataset_name)}</h3><div class="hint">${m.total_cases} exames · <b>${esc(scenarioName)}</b> · ${esc(report.model.model_version||report.model.model_id||'MedGemma')} · ${gate}</div></div>
     <div class="download"><a href="/api/benchmarks/${currentBenchmark}/report.json">Baixar JSON</a><a href="/api/benchmarks/${currentBenchmark}/report.csv">Baixar CSV</a></div></div>
     <div class="metrics">${metric('Acurácia',pct(m.accuracy),ci(m,'accuracy'),'primary-m')}${metric('Sensibilidade',pct(m.sensitivity),ci(m,'sensitivity'))}
       ${metric('Especificidade',pct(m.specificity),ci(m,'specificity'))}${metric('F1-score',pct(m.f1_score),'inconclusivos/falhas penalizados')}

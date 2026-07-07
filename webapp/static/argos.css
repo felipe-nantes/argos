@@ -566,6 +566,22 @@ footer {
 .type:hover { border-color: var(--argos-border-strong); transform: translateY(-1px); }
 .type b { display: block; padding-right: 18px; color: var(--argos-text-strong); font-size: 13px; }
 .type span { display: block; margin-top: 5px; color: var(--argos-muted); font-size: 11px; }
+
+/* Toggle de cenario (baseline x volumetrico) — botoes segmentados */
+.scenario-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 8px; }
+.scenario-btn {
+  min-height: 0; text-align: left; padding: 13px 15px; border-radius: 14px;
+  border: 1px solid var(--argos-border); background: rgba(247, 251, 249, 0.82);
+  color: var(--argos-text-strong); box-shadow: none;
+}
+.scenario-btn b { display: block; font-size: 13px; font-weight: 700; }
+.scenario-btn span { display: block; margin-top: 4px; font-size: 11px; color: var(--argos-muted); font-weight: 500; }
+.scenario-btn:hover { border-color: var(--argos-border-strong); }
+.scenario-btn.active {
+  border-color: var(--argos-primary); background: var(--argos-primary-faint);
+  box-shadow: 0 8px 22px rgba(16, 185, 129, 0.1);
+}
+.scenario-btn.active b { color: var(--argos-primary-dark); }
 .benchmark-grid .drop { min-height: 192px; }
 .dataset-summary { margin: 15px 0 9px; }
 .case-list { max-height: 360px; overflow: hidden auto; border: 1px solid var(--argos-border); border-radius: 15px; background: rgba(255, 255, 255, 0.58); }
