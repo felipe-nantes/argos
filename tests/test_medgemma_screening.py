@@ -32,6 +32,25 @@ class TestOnlyClient:
         }
 
 
+class AuditedTestClient(TestOnlyClient):
+    def __init__(self):
+        self.last_response_audit = {}
+
+    def generate(self, panel_path, prompt):
+        report = super().generate(panel_path, prompt)
+        self.last_response_audit = {
+            "schema": "argos-medgemma-response-validation-v1",
+            "raw_response_persisted": False,
+            "repair_attempted": True,
+            "repaired": True,
+            "attempts": [
+                {"attempt": 1, "status": "invalid", "error_message": "schema inválido"},
+                {"attempt": 2, "status": "accepted"},
+            ],
+        }
+        return report
+
+
 class RagAwareTestClient(TestOnlyClient):
     def __init__(self):
         self.prompts = []
@@ -146,6 +165,21 @@ def test_full_flow_persists_traceable_pending_review_report(synthetic_case, tmp_
     assert len(report["screening_config_sha256"]) == 64
     assert report["durations_seconds"]["panel_generation"] >= 0
     assert report["durations_seconds"]["screening_total"] >= 0
+
+
+def test_full_flow_persists_response_validation_audit_without_raw_response(synthetic_case, tmp_path):
+    result = run_screening(
+        **_args(synthetic_case, tmp_path),
+        visible_phi_confirmed=True,
+        client=AuditedTestClient(),
+    )
+    report = json.loads((tmp_path / "screening" / "medgemma_report.json").read_text("utf-8"))
+    audit = report["panel_reports"][0]["response_validation_audit"]
+    assert result["status"] == "pending_review"
+    assert audit["repaired"] is True
+    assert audit["raw_response_persisted"] is False
+    assert [attempt["status"] for attempt in audit["attempts"]] == ["invalid", "accepted"]
+    assert "resultado_hipotese" not in json.dumps(audit).lower()
 
 
 def test_full_flow_with_rag_persists_context_and_prompt_audit(synthetic_case, tmp_path):

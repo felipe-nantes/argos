@@ -58,6 +58,15 @@ def test_environment_can_override_model_and_endpoint():
     )
     assert config["medgemma"]["model_version"] == "Configured Test Model"
     assert config["medgemma"]["endpoint_url"].endswith(":9999/generate")
+    assert config["medgemma"]["response_validation_max_retries"] == 1
+
+
+def test_environment_can_override_response_validation_retries():
+    config = load_screening_config(
+        "configs/medgemma_4b.yaml",
+        environ={"MEDGEMMA_RESPONSE_VALIDATION_MAX_RETRIES": "2"},
+    )
+    assert config["medgemma"]["response_validation_max_retries"] == 2
 
 
 def test_invalid_numeric_environment_override_is_pipeline_error():
@@ -257,6 +266,82 @@ def test_http_adapter_sends_contract_and_validates_echoed_model(tmp_path, monkey
     assert captured["model_id"] == "google/medgemma-1.5-4b-it"
     assert captured["image"]["mime_type"] == "image/png"
     assert report["resultado_hipotese"] == "NEGATIVA"
+
+
+def test_http_adapter_retries_invalid_schema_with_strict_prompt(tmp_path, monkeypatch):
+    config = load_screening_config(
+        "configs/medgemma_4b.yaml",
+        environ={
+            "MEDGEMMA_BACKEND_CONFIGURED": "true",
+            "MEDGEMMA_MODEL_AVAILABLE": "true",
+        },
+    )
+    panel = tmp_path / "panel.png"
+    panel.write_bytes(b"test-png-bytes")
+    prompts = []
+    monkeypatch.setattr(
+        "dtwin.medgemma_client.socket.create_connection",
+        lambda *_args, **_kwargs: _Context(),
+    )
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        prompts.append(payload["prompt"])
+        report = valid_report("POSITIVA | NEGATIVA | INCONCLUSIVA") if len(prompts) == 1 else valid_report("POSITIVA")
+        body = json.dumps({
+            "model_id": config["medgemma"]["model_id"],
+            "model_version": config["medgemma"]["model_version"],
+            "report": report,
+        }).encode("utf-8")
+        return _Context(body)
+
+    monkeypatch.setattr("dtwin.medgemma_client.urlopen", fake_urlopen)
+    client = HTTPJSONMedGemmaClient(config)
+    report = client.generate(panel, "research prompt")
+
+    assert report["resultado_hipotese"] == "POSITIVA"
+    assert len(prompts) == 2
+    assert "CORREÇÃO OBRIGATÓRIA DE FORMATO" in prompts[1]
+    assert client.last_response_audit["repaired"] is True
+    assert client.last_response_audit["raw_response_persisted"] is False
+    assert [a["status"] for a in client.last_response_audit["attempts"]] == ["invalid", "accepted"]
+    assert client.last_timings["response_validation_attempts"] == 2
+    assert client.last_timings["response_repair_used"] is True
+
+
+def test_http_adapter_fails_after_schema_retry_is_exhausted(tmp_path, monkeypatch):
+    config = load_screening_config(
+        "configs/medgemma_4b.yaml",
+        environ={
+            "MEDGEMMA_BACKEND_CONFIGURED": "true",
+            "MEDGEMMA_MODEL_AVAILABLE": "true",
+        },
+    )
+    panel = tmp_path / "panel.png"
+    panel.write_bytes(b"test-png-bytes")
+    calls = []
+    monkeypatch.setattr(
+        "dtwin.medgemma_client.socket.create_connection",
+        lambda *_args, **_kwargs: _Context(),
+    )
+
+    def fake_urlopen(request, timeout):
+        calls.append(json.loads(request.data.decode("utf-8"))["prompt"])
+        body = json.dumps({
+            "model_id": config["medgemma"]["model_id"],
+            "model_version": config["medgemma"]["model_version"],
+            "report": valid_report("POSITIVA | NEGATIVA | INCONCLUSIVA"),
+        }).encode("utf-8")
+        return _Context(body)
+
+    monkeypatch.setattr("dtwin.medgemma_client.urlopen", fake_urlopen)
+    client = HTTPJSONMedGemmaClient(config)
+    with pytest.raises(PipelineError, match="inválida após 2 tentativa"):
+        client.generate(panel, "research prompt")
+
+    assert len(calls) == 2
+    assert client.last_response_audit["repaired"] is False
+    assert [a["status"] for a in client.last_response_audit["attempts"]] == ["invalid", "invalid"]
 
 
 def test_http_adapter_discards_response_from_wrong_model(tmp_path, monkeypatch):

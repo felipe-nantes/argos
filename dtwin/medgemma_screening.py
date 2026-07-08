@@ -335,6 +335,9 @@ def run_screening(
             "rag_context_sha256": rag_context.get("context_sha256") if rag_context.get("enabled") is True else None,
             "report": validated,
         }
+        response_audit = getattr(medgemma_client, "last_response_audit", None)
+        if isinstance(response_audit, dict) and response_audit:
+            entry["response_validation_audit"] = response_audit
         panel_reports.append(entry)
         inference_timings.append({
             "panel_number": record["panel_number"],

@@ -64,6 +64,7 @@ def _set_env_override(target: dict[str, Any], key: str, value: str) -> None:
     integer_keys = {
         "timeout_seconds",
         "max_retries",
+        "response_validation_max_retries",
         "max_input_bytes",
         "max_output_tokens",
         "max_prompt_chars",
@@ -107,6 +108,7 @@ def load_screening_config(
     med = config.get("medgemma")
     if not isinstance(med, dict):
         raise PipelineError("Configuração sem bloco 'medgemma_screening.medgemma'.")
+    med.setdefault("response_validation_max_retries", 1)
 
     env = os.environ if environ is None else environ
     overrides = {
@@ -118,6 +120,7 @@ def load_screening_config(
         "MEDGEMMA_ENDPOINT_URL": "endpoint_url",
         "MEDGEMMA_TIMEOUT_SECONDS": "timeout_seconds",
         "MEDGEMMA_MAX_RETRIES": "max_retries",
+        "MEDGEMMA_RESPONSE_VALIDATION_MAX_RETRIES": "response_validation_max_retries",
         "MEDGEMMA_MAX_INPUT_BYTES": "max_input_bytes",
         "MEDGEMMA_MAX_OUTPUT_TOKENS": "max_output_tokens",
         "MEDGEMMA_MAX_PROMPT_CHARS": "max_prompt_chars",
@@ -247,6 +250,8 @@ def _validate_config(config: dict[str, Any]) -> None:
         )
     if int(med["max_retries"]) < 0:
         raise PipelineError("max_retries não pode ser negativo.")
+    if int(med.get("response_validation_max_retries", 1)) < 0:
+        raise PipelineError("response_validation_max_retries não pode ser negativo.")
     if int(med["max_input_bytes"]) <= 0 or int(med["max_output_tokens"]) <= 0:
         raise PipelineError("Limites de entrada/saída MedGemma devem ser positivos.")
     if int(med.get("max_prompt_chars", 12000)) <= 0:
@@ -293,6 +298,57 @@ def build_medgemma_prompt(config: dict[str, Any]) -> str:
             f"Prompt MedGemma excede max_prompt_chars ({len(prompt)} > {max_chars})."
         )
     return prompt
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _short_error(value: Any, limit: int = 500) -> str:
+    text = str(value).replace("\n", " ").strip()
+    return text[:limit]
+
+
+def _validation_retry_prompt(original_prompt: str, error: str, max_chars: int) -> str:
+    suffix = f"""
+
+CORREÇÃO OBRIGATÓRIA DE FORMATO:
+A resposta anterior foi rejeitada pelo validador interno por este erro de schema: {_short_error(error, 350)}
+
+Refaça a análise do mesmo painel e responda novamente. Retorne somente um objeto JSON válido, sem Markdown,
+sem texto fora do JSON, sem copiar opções separadas por "|", sem usar placeholders e sem diagnóstico definitivo.
+
+Use exatamente estes valores permitidos:
+- resultado_hipotese: "POSITIVA", "NEGATIVA" ou "INCONCLUSIVA"
+- confianca: "baixa", "moderada" ou "alta"
+- necessidade_de_revisao_humana: true
+
+Mantenha modo de pesquisa, não é diagnóstico, não é laudo médico e revisão humana obrigatória.
+"""
+    if len(original_prompt) + len(suffix) <= max_chars:
+        return original_prompt + suffix
+
+    compact = f"""
+Você está analisando uma montagem de RM abdominal em modo de pesquisa. A região do fígado está segmentada por contorno.
+A resposta anterior foi rejeitada por erro de schema: {_short_error(error, 350)}
+
+Baseie-se apenas no painel enviado. Não é diagnóstico. Não é laudo médico. Revisão humana obrigatória.
+Não recomende tratamento, cirurgia, biópsia ou medicação.
+
+Retorne somente um objeto JSON válido, sem Markdown e sem texto adicional:
+- resultado_hipotese deve ser uma única string escolhida entre POSITIVA, NEGATIVA, INCONCLUSIVA.
+- resumo_do_achado deve ser string.
+- localizacao_aproximada deve ser string.
+- sinais_visuais_observados deve ser lista de strings.
+- confianca deve ser uma única string escolhida entre baixa, moderada, alta.
+- limitacoes_da_analise deve ser lista de strings.
+- necessidade_de_revisao_humana deve ser true.
+"""
+    if len(compact) > max_chars:
+        raise PipelineError(
+            f"Prompt de retry MedGemma excede max_prompt_chars ({len(compact)} > {max_chars})."
+        )
+    return compact.strip()
 
 
 def _parse_json_report(value: Any) -> dict[str, Any]:
@@ -433,6 +489,7 @@ class HTTPJSONMedGemmaClient:
         self.config = config
         self.med = config["medgemma"]
         self.last_timings: dict[str, float] = {}
+        self.last_response_audit: dict[str, Any] = {}
 
     def _ensure_ready(self) -> None:
         if not _bool(self.med.get("enabled", False), "medgemma.enabled"):
@@ -504,20 +561,7 @@ class HTTPJSONMedGemmaClient:
             "model_version": self.med["model_version"],
         }
 
-    def generate(self, panel_path: Path, prompt: str) -> dict[str, Any]:
-        total_started = time.monotonic()
-        self._ensure_ready()
-        panel_path = Path(panel_path)
-        if not panel_path.is_file():
-            raise PipelineError(f"Painel MedGemma não encontrado: {panel_path}")
-        panel_bytes = panel_path.read_bytes()
-        if len(panel_bytes) > int(self.med["max_input_bytes"]):
-            raise PipelineError(
-                f"Painel excede max_input_bytes ({len(panel_bytes)} > {self.med['max_input_bytes']})."
-            )
-        ready_started = time.monotonic()
-        self.check_ready()
-        self.last_timings = {"backend_readiness": round(time.monotonic() - ready_started, 4)}
+    def _post_generate(self, panel_bytes: bytes, prompt: str) -> dict[str, Any]:
         payload = {
             "contract": "dtwin-medgemma-v1",
             "model_id": self.med["model_id"],
@@ -537,7 +581,6 @@ class HTTPJSONMedGemmaClient:
         )
         attempts = int(self.med["max_retries"]) + 1
         last_error: Exception | None = None
-        inference_started = time.monotonic()
         for attempt in range(attempts):
             try:
                 with urlopen(request, timeout=int(self.med["timeout_seconds"])) as response:
@@ -557,21 +600,96 @@ class HTTPJSONMedGemmaClient:
             raise PipelineError(
                 f"Falha ao chamar backend MedGemma após {attempts} tentativa(s): {last_error}"
             ) from last_error
-        self.last_timings["medgemma_inference"] = round(time.monotonic() - inference_started, 4)
         if not isinstance(decoded, dict):
             raise PipelineError("Resposta do backend MedGemma deve ser um objeto JSON.")
-        response_model_id = decoded.get("model_id")
-        response_version = decoded.get("model_version")
-        if response_model_id != self.med["model_id"] or response_version != self.med["model_version"]:
+        return decoded
+
+    def generate(self, panel_path: Path, prompt: str) -> dict[str, Any]:
+        total_started = time.monotonic()
+        self._ensure_ready()
+        panel_path = Path(panel_path)
+        if not panel_path.is_file():
+            raise PipelineError(f"Painel MedGemma não encontrado: {panel_path}")
+        panel_bytes = panel_path.read_bytes()
+        if len(panel_bytes) > int(self.med["max_input_bytes"]):
             raise PipelineError(
-                "Backend não confirmou exatamente o modelo configurado; relatório descartado."
+                f"Painel excede max_input_bytes ({len(panel_bytes)} > {self.med['max_input_bytes']})."
             )
-        raw_report = decoded.get("report", decoded.get("output"))
-        validation_started = time.monotonic()
-        validated = validate_medgemma_report(raw_report, self.config["report"])
-        self.last_timings["response_validation"] = round(time.monotonic() - validation_started, 4)
-        self.last_timings["client_total"] = round(time.monotonic() - total_started, 4)
-        return validated
+        ready_started = time.monotonic()
+        self.check_ready()
+        self.last_timings = {"backend_readiness": round(time.monotonic() - ready_started, 4)}
+        self.last_response_audit = {
+            "schema": "argos-medgemma-response-validation-v1",
+            "max_validation_retries": int(self.med.get("response_validation_max_retries", 1)),
+            "raw_response_persisted": False,
+            "attempts": [],
+        }
+
+        validation_attempts = int(self.med.get("response_validation_max_retries", 1)) + 1
+        max_prompt_chars = int(self.med.get("max_prompt_chars", 12000))
+        current_prompt = prompt
+        total_inference_seconds = 0.0
+        total_validation_seconds = 0.0
+        last_validation_error: PipelineError | None = None
+        for validation_attempt in range(1, validation_attempts + 1):
+            inference_started = time.monotonic()
+            decoded = self._post_generate(panel_bytes, current_prompt)
+            total_inference_seconds += time.monotonic() - inference_started
+            audit_entry = {
+                "attempt": validation_attempt,
+                "prompt_sha256": _sha256_text(current_prompt),
+                "repair_prompt": validation_attempt > 1,
+            }
+            response_model_id = decoded.get("model_id")
+            response_version = decoded.get("model_version")
+            if response_model_id != self.med["model_id"] or response_version != self.med["model_version"]:
+                audit_entry.update(status="rejected", error="model_identity_mismatch")
+                self.last_response_audit["attempts"].append(audit_entry)
+                raise PipelineError(
+                    "Backend não confirmou exatamente o modelo configurado; relatório descartado."
+                )
+            raw_report = decoded.get("report", decoded.get("output"))
+            validation_started = time.monotonic()
+            try:
+                validated = validate_medgemma_report(raw_report, self.config["report"])
+            except PipelineError as exc:
+                total_validation_seconds += time.monotonic() - validation_started
+                last_validation_error = exc
+                audit_entry.update(
+                    status="invalid",
+                    error_type=type(exc).__name__,
+                    error_message=_short_error(exc),
+                )
+                self.last_response_audit["attempts"].append(audit_entry)
+                if validation_attempt >= validation_attempts:
+                    self.last_response_audit["repair_attempted"] = validation_attempts > 1
+                    self.last_response_audit["repaired"] = False
+                    self.last_timings["medgemma_inference"] = round(total_inference_seconds, 4)
+                    self.last_timings["response_validation"] = round(total_validation_seconds, 4)
+                    self.last_timings["response_validation_attempts"] = validation_attempt
+                    self.last_timings["response_repair_used"] = False
+                    self.last_timings["client_total"] = round(time.monotonic() - total_started, 4)
+                    raise PipelineError(
+                        f"Resposta MedGemma inválida após {validation_attempts} tentativa(s): {exc}"
+                    ) from exc
+                current_prompt = _validation_retry_prompt(prompt, str(exc), max_prompt_chars)
+                continue
+
+            total_validation_seconds += time.monotonic() - validation_started
+            audit_entry["status"] = "accepted"
+            self.last_response_audit["attempts"].append(audit_entry)
+            self.last_response_audit["repair_attempted"] = validation_attempt > 1 or last_validation_error is not None
+            self.last_response_audit["repaired"] = validation_attempt > 1
+            self.last_timings["medgemma_inference"] = round(total_inference_seconds, 4)
+            self.last_timings["response_validation"] = round(total_validation_seconds, 4)
+            self.last_timings["response_validation_attempts"] = validation_attempt
+            self.last_timings["response_repair_used"] = validation_attempt > 1
+            self.last_timings["client_total"] = round(time.monotonic() - total_started, 4)
+            return validated
+
+        raise PipelineError(
+            f"Resposta MedGemma inválida após {validation_attempts} tentativa(s): {last_validation_error}"
+        )
 
 
 def create_medgemma_client(config: dict[str, Any]) -> HTTPJSONMedGemmaClient:
