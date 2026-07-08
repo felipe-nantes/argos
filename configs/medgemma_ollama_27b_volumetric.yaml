@@ -1,0 +1,9 @@
+# Cenário B no Mac: MedGemma 27B servido por Ollama com cobertura volumétrica.
+#
+# Este é o candidato principal para novos benchmarks no Mac, porque mantém o
+# backend 27B operacional do runbook e altera somente a estratégia de painel.
+extends: medgemma_ollama_27b.yaml
+medgemma_screening:
+  panel:
+    strategy: volumetric_blocks
+    axial_tiles_per_panel: 9

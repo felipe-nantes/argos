@@ -1,0 +1,8 @@
+# Cenário exploratório no Mac: MedGemma 27B via Ollama com cobertura volumétrica
+# e RAG textual. Não é o cenário recomendado para a decisão visual principal,
+# mas fica disponível para comparação controlada no benchmark.
+extends: medgemma_ollama_27b_rag.yaml
+medgemma_screening:
+  panel:
+    strategy: volumetric_blocks
+    axial_tiles_per_panel: 9
