@@ -20,7 +20,7 @@ from dtwin.core import PipelineError, now_utc, sha256_of
 SCHEMA_VERSION = "argos-rag-bm25-index-v1"
 DEFAULT_K1 = 1.5
 DEFAULT_B = 0.75
-_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", re.UNICODE)
+_TOKEN_RE = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -147,17 +147,27 @@ def build_bm25_index(
     postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
     doc_lengths: list[int] = []
     docs: list[dict[str, Any]] = []
+    skipped_chunks: list[dict[str, Any]] = []
 
     for chunk in chunks:
         terms = tokenize(chunk.text)
-        if not terms:
-            raise PipelineError(f"Chunk RAG sem termos indexáveis: {chunk.chunk_id}")
+        is_indexed = bool(terms)
         counts = Counter(terms)
-        doc_lengths.append(len(terms))
-        for term, tf in sorted(counts.items()):
-            postings[term].append((chunk.ordinal, int(tf)))
-        for term in counts:
-            term_doc_freq[term] += 1
+        if is_indexed:
+            doc_lengths.append(len(terms))
+            for term, tf in sorted(counts.items()):
+                postings[term].append((chunk.ordinal, int(tf)))
+            for term in counts:
+                term_doc_freq[term] += 1
+        else:
+            skipped_chunks.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "section": chunk.section,
+                    "reason": "no_indexable_terms",
+                }
+            )
         docs.append(
             {
                 "ordinal": chunk.ordinal,
@@ -172,15 +182,19 @@ def build_bm25_index(
                 "pmcid": chunk.pmcid,
                 "doi": chunk.doi,
                 "token_count": len(terms),
+                "indexed": is_indexed,
             }
         )
 
-    total_docs = len(chunks)
-    avg_doc_len = sum(doc_lengths) / total_docs
+    total_chunks = len(chunks)
+    indexed_doc_count = len(doc_lengths)
+    if indexed_doc_count == 0:
+        raise PipelineError("Nenhum chunk RAG possui termos indexáveis.")
+    avg_doc_len = sum(doc_lengths) / indexed_doc_count
     index_terms = {
         term: {
             "df": int(term_doc_freq[term]),
-            "idf": _bm25_idf(total_docs, term_doc_freq[term]),
+            "idf": _bm25_idf(indexed_doc_count, term_doc_freq[term]),
             "postings": [[doc_ord, tf] for doc_ord, tf in postings[term]],
         }
         for term in sorted(postings)
@@ -192,7 +206,10 @@ def build_bm25_index(
         "corpus_version": corpus_manifest.get("corpus_version"),
         "corpus_dir": str(corpus_dir),
         "corpus_manifest_sha256": sha256_of(corpus_dir / "manifest.json"),
-        "chunk_count": total_docs,
+        "chunk_count": total_chunks,
+        "indexed_chunk_count": indexed_doc_count,
+        "skipped_chunk_count": len(skipped_chunks),
+        "skipped_chunks": skipped_chunks,
         "vocabulary_size": len(index_terms),
         "avg_doc_len": avg_doc_len,
         "k1": float(k1),
@@ -212,7 +229,10 @@ def build_bm25_index(
         "index_sha256": sha256_of(index_path),
         "corpus_dir": str(corpus_dir),
         "corpus_manifest_sha256": index["corpus_manifest_sha256"],
-        "chunk_count": total_docs,
+        "chunk_count": total_chunks,
+        "indexed_chunk_count": indexed_doc_count,
+        "skipped_chunk_count": len(skipped_chunks),
+        "skipped_chunks": skipped_chunks,
         "vocabulary_size": len(index_terms),
         "k1": float(k1),
         "b": float(b),

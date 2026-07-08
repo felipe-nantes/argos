@@ -117,6 +117,53 @@ def test_search_bm25_supports_category_filter(tmp_path):
     assert {result["doc_id"] for result in results} == {"doc_hemangioma"}
 
 
+def test_build_bm25_index_tracks_but_skips_chunks_without_indexable_terms(tmp_path):
+    corpus_dir = _build_corpus(tmp_path)
+    manifest_path = corpus_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text("utf-8"))
+    noise_sha = "a" * 64
+    noise_chunk = {
+        "chunk_id": "doc_hcc::chunk_noise",
+        "doc_id": "doc_hcc",
+        "title": "LI-RADS HCC",
+        "section": "Share",
+        "text": "-\n-\n-",
+        "sha256": noise_sha,
+        "categories": ["hcc", "li_rads"],
+        "priority": "support",
+        "url": "https://example.org/hcc",
+        "pmcid": "PMC_HCC",
+        "doi": "10.0000/hcc",
+    }
+    noise_path = corpus_dir / "chunks" / "doc_hcc__chunk_noise.json"
+    noise_path.write_text(json.dumps(noise_chunk), encoding="utf-8")
+    manifest["chunks"].append(
+        {
+            "chunk_id": noise_chunk["chunk_id"],
+            "doc_id": noise_chunk["doc_id"],
+            "path": "chunks/doc_hcc__chunk_noise.json",
+            "sha256": noise_sha,
+        }
+    )
+    manifest["chunk_count"] = len(manifest["chunks"])
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    index_dir = tmp_path / "index"
+    index_manifest = build_bm25_index(corpus_dir=corpus_dir, out_dir=index_dir)
+
+    assert index_manifest["chunk_count"] == 3
+    assert index_manifest["indexed_chunk_count"] == 2
+    assert index_manifest["skipped_chunk_count"] == 1
+    assert index_manifest["skipped_chunks"][0]["reason"] == "no_indexable_terms"
+
+    index = load_bm25_index(index_dir / "bm25_index.json")
+    assert index["documents"][2]["chunk_id"] == "doc_hcc::chunk_noise"
+    assert index["documents"][2]["indexed"] is False
+    results = search_bm25(index, "arterial washout", top_k=5)
+    assert results
+    assert all(result["chunk_id"] != "doc_hcc::chunk_noise" for result in results)
+
+
 def test_build_rag_index_cli_completes(tmp_path, capsys):
     corpus_dir = _build_corpus(tmp_path)
     index_dir = tmp_path / "cli_index"
