@@ -568,7 +568,7 @@ footer {
 .type span { display: block; margin-top: 5px; color: var(--argos-muted); font-size: 11px; }
 
 /* Toggle de cenario (baseline x volumetrico) — botoes segmentados */
-.scenario-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 8px; }
+.scenario-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 8px; }
 .scenario-btn {
   min-height: 0; text-align: left; padding: 13px 15px; border-radius: 14px;
   border: 1px solid var(--argos-border); background: rgba(247, 251, 249, 0.82);

@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 
 from dtwin.core import PipelineError
 from dtwin.medgemma_client import (
@@ -10,6 +11,10 @@ from dtwin.medgemma_client import (
     model_trace,
     validate_medgemma_report,
 )
+
+
+def yaml_dump_config(config):
+    return yaml.safe_dump({"medgemma_screening": config}, sort_keys=False, allow_unicode=True)
 
 
 def valid_report(state="INCONCLUSIVA"):
@@ -70,6 +75,36 @@ def test_prompt_contains_research_states_and_human_review():
         "não é diagnóstico", "não é laudo médico", "Revisão humana obrigatória",
     ):
         assert text.lower() in prompt.lower()
+
+
+def test_rag_config_is_explicit_and_versioned():
+    config = load_screening_config("configs/medgemma_local_4b_rag.yaml")
+    assert config["rag"]["enabled"] is True
+    assert config["rag"]["index_path"] == "rag/index/liver_mri_rag_v1/bm25_index.json"
+    assert config["rag"]["retrieval_eval"] == "docs/rag/retrieval_eval_v1.yaml"
+    assert config["panel"].get("strategy", "uniform_9") == "uniform_9"
+
+
+def test_volumetric_rag_config_preserves_volumetric_strategy():
+    config = load_screening_config("configs/medgemma_local_4b_volumetric_rag.yaml")
+    assert config["rag"]["enabled"] is True
+    assert config["panel"]["strategy"] == "volumetric_blocks"
+
+
+def test_rag_config_rejects_absolute_or_parent_paths(tmp_path):
+    config = load_screening_config("configs/medgemma_4b.yaml")
+    config["rag"] = {
+        "enabled": True,
+        "index_path": "../private/index.json",
+        "retrieval_eval": "docs/rag/retrieval_eval_v1.yaml",
+        "top_k": 1,
+        "max_sources": 1,
+        "max_chunk_chars": 100,
+    }
+    path = tmp_path / "bad_rag.yaml"
+    path.write_text(yaml_dump_config(config), encoding="utf-8")
+    with pytest.raises(PipelineError, match="caminho relativo seguro"):
+        load_screening_config(path)
 
 
 @pytest.mark.parametrize("state", ["POSITIVA", "NEGATIVA", "INCONCLUSIVA"])

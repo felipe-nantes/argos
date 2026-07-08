@@ -40,6 +40,12 @@
           <button type="button" class="scenario-btn" data-scenario="volumetric" aria-pressed="false">
             <b>Volumétrico</b><span>Cobertura de 100% do fígado</span>
           </button>
+          <button type="button" class="scenario-btn" data-scenario="rag" aria-pressed="false">
+            <b>RAG</b><span>9 cortes + contexto textual auditável</span>
+          </button>
+          <button type="button" class="scenario-btn" data-scenario="volumetric_rag" aria-pressed="false">
+            <b>Vol. + RAG</b><span>100% do fígado + contexto textual</span>
+          </button>
         </div>
         <div class="types">
           <label class="type"><input type="radio" name="kind" value="positive"><b>Positivo</b><span>Todos os exames são alterados.</span></label>
@@ -82,9 +88,14 @@ const $=s=>document.querySelector(s);const show=(e,on=true)=>e.classList.toggle(
 let uploadedItems=[],detectedCases=[],pollTimer=null,currentBenchmark=null,selectedScenario='baseline',backendReady=false;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function selectedKind(){return document.querySelector('input[name=kind]:checked').value}
-const SCENARIO_LABEL={baseline:'Baseline (9 cortes)',volumetric:'Volumétrico (100%)'};
+  const SCENARIO_LABEL={
+    baseline:'Baseline (9 cortes)',
+    volumetric:'Volumétrico (100%)',
+    rag:'RAG textual',
+    volumetric_rag:'Volumétrico + RAG'
+  };
 
-// --- Toggle de cenario (baseline x volumetrico) ---
+// --- Toggle de cenario autorizado (baseline / volumetrico / RAG) ---
 document.querySelectorAll('.scenario-btn').forEach(btn=>btn.onclick=()=>{
   document.querySelectorAll('.scenario-btn').forEach(b=>{const on=b===btn;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on)});
   selectedScenario=btn.dataset.scenario;

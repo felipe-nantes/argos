@@ -66,9 +66,17 @@ MEDGEMMA_CONFIG = os.environ.get("WEBAPP_MEDGEMMA_CONFIG", "configs/medgemma_loc
 VOLUMETRIC_MEDGEMMA_CONFIG = os.environ.get(
     "WEBAPP_VOLUMETRIC_MEDGEMMA_CONFIG", "configs/medgemma_local_4b_volumetric.yaml"
 )
+RAG_MEDGEMMA_CONFIG = os.environ.get(
+    "WEBAPP_RAG_MEDGEMMA_CONFIG", "configs/medgemma_local_4b_rag.yaml"
+)
+VOLUMETRIC_RAG_MEDGEMMA_CONFIG = os.environ.get(
+    "WEBAPP_VOLUMETRIC_RAG_MEDGEMMA_CONFIG", "configs/medgemma_local_4b_volumetric_rag.yaml"
+)
 BENCHMARK_SCENARIOS = {
     "baseline": MEDGEMMA_CONFIG,
     "volumetric": VOLUMETRIC_MEDGEMMA_CONFIG,
+    "rag": RAG_MEDGEMMA_CONFIG,
+    "volumetric_rag": VOLUMETRIC_RAG_MEDGEMMA_CONFIG,
 }
 HEALTH_URL = os.environ.get("WEBAPP_MEDGEMMA_HEALTH", "http://127.0.0.1:8001/health")
 MIN_SLICES = 3

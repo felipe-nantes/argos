@@ -1,0 +1,23 @@
+# Cenário RAG textual: herda o backend 4B operacional e adiciona contexto BM25.
+extends: medgemma_local_4b.yaml
+medgemma_screening:
+  rag:
+    enabled: true
+    index_path: rag/index/liver_mri_rag_v1/bm25_index.json
+    retrieval_eval: docs/rag/retrieval_eval_v1.yaml
+    top_k: 2
+    max_sources: 10
+    max_chunk_chars: 520
+    min_score: 0.0
+    query_ids:
+      - hcc_aphe_washout_capsule
+      - hemangioma_t2_fill_in
+      - fnh_central_scar_hepatobiliary
+      - hepatic_adenoma_subtypes
+      - metastases_rim_diffusion
+      - cholangiocarcinoma_delayed_enhancement
+      - dwi_adc_benign_malignant
+      - dynamic_contrast_phases
+      - arterial_phase_motion_artifact
+      - pseudolesion_perfusion_pitfall
+

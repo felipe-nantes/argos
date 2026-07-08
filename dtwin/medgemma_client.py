@@ -210,6 +210,23 @@ def _validate_config(config: dict[str, Any]) -> None:
     privacy = config.get("privacy", {})
     if privacy.get("remove_png_metadata") is not True:
         raise PipelineError("privacy.remove_png_metadata deve ser true.")
+    rag = config.get("rag", {})
+    if rag:
+        if not isinstance(rag, dict):
+            raise PipelineError("rag deve ser um bloco de configuração.")
+        if rag.get("enabled") is True:
+            for key in ("index_path", "retrieval_eval"):
+                value = str(rag.get(key, "")).strip()
+                path = Path(value)
+                if not value:
+                    raise PipelineError(f"rag.{key} é obrigatório quando rag.enabled=true.")
+                if path.is_absolute() or ".." in path.parts:
+                    raise PipelineError(f"rag.{key} deve ser caminho relativo seguro dentro do repositório.")
+            for key in ("top_k", "max_sources", "max_chunk_chars"):
+                if int(rag.get(key, 0)) <= 0:
+                    raise PipelineError(f"rag.{key} deve ser positivo quando rag.enabled=true.")
+            if float(rag.get("min_score", 0.0)) < 0:
+                raise PipelineError("rag.min_score não pode ser negativo.")
 
     med = config["medgemma"]
     required = (

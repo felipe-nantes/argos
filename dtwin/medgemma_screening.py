@@ -21,10 +21,12 @@ from .medgemma_client import (
 )
 from .medgemma_panel import generate_liver_panel
 from .medgemma_panel_multiphase import derive_texture_channels, generate_liver_panel_multiphase
+from .rag import append_rag_to_prompt, build_rag_context, persist_rag_context
 
 
 REPORT_FILENAME = "medgemma_report.json"
 PANEL_REPORTS_FILENAME = "medgemma_panel_reports.json"
+RAG_CONTEXT_FILENAME = "rag_context.json"
 
 
 def build_report_envelope(
@@ -39,6 +41,8 @@ def build_report_envelope(
     durations_seconds: dict[str, float] | None = None,
     panel_reports: list[dict[str, Any]] | None = None,
     aggregation_rule: str | None = None,
+    rag_context: dict[str, Any] | None = None,
+    prompt_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validated = validate_medgemma_report(report, config["report"])
     panels = list(panel_manifest.get("panels") or [{
@@ -69,6 +73,13 @@ def build_report_envelope(
         "created_at": now_utc(),
         "durations_seconds": durations_seconds or {},
     }
+    if rag_context is not None:
+        envelope["rag"] = {
+            **rag_context,
+            "context_file": RAG_CONTEXT_FILENAME if rag_context.get("enabled") is True else None,
+        }
+    if prompt_audit is not None:
+        envelope["prompt_audit"] = prompt_audit
     if panel_reports is not None:
         envelope["panel_reports"] = panel_reports
         envelope["aggregation_rule"] = aggregation_rule
@@ -115,6 +126,13 @@ def _partial_prompt(base_prompt: str, record: dict[str, Any]) -> str:
         "Esta é uma avaliação parcial de uma cobertura volumétrica. Analise somente "
         "as imagens deste painel e não presuma que ele representa sozinho todo o fígado."
     )
+
+
+def _repo_root_from_config_path(path: Path) -> Path:
+    resolved = Path(path).resolve()
+    if resolved.parent.name == "configs":
+        return resolved.parent.parent
+    return Path.cwd().resolve()
 
 
 def _aggregate_panel_reports(entries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -279,14 +297,33 @@ def run_screening(
     if panel_manifest.get("visible_phi_confirmed") is not True:
         raise PipelineError("O manifest do painel não registrou a confirmação visual de PHI.")
     # _authoritative_panels já validou todos os hashes, não apenas o preview legado.
-    prompt = build_medgemma_prompt(config)
+    base_prompt = build_medgemma_prompt(config)
+    rag_started = time.monotonic()
+    rag_context = build_rag_context(
+        config=config,
+        repo_root=_repo_root_from_config_path(Path(medgemma_config_path)),
+    )
+    prompt, prompt_audit = append_rag_to_prompt(
+        base_prompt,
+        rag_context,
+        max_prompt_chars=int(config["medgemma"].get("max_prompt_chars", 12000)),
+    )
+    rag_duration = time.monotonic() - rag_started
+    if rag_context.get("enabled") is True:
+        persist_rag_context(output_dir / RAG_CONTEXT_FILENAME, rag_context)
     medgemma_client = client if client is not None else create_medgemma_client(config)
     panel_reports: list[dict[str, Any]] = []
     inference_timings: list[dict[str, Any]] = []
     panel_reports_path = output_dir / PANEL_REPORTS_FILENAME
+    max_prompt_chars = int(config["medgemma"].get("max_prompt_chars", 12000))
     for record in panel_records:
         panel_started_at = time.monotonic()
-        raw = medgemma_client.generate(record["_path"], _partial_prompt(prompt, record))
+        panel_prompt = _partial_prompt(prompt, record)
+        if len(panel_prompt) > max_prompt_chars:
+            raise PipelineError(
+                f"Prompt do painel excede max_prompt_chars ({len(panel_prompt)} > {max_prompt_chars})."
+            )
+        raw = medgemma_client.generate(record["_path"], panel_prompt)
         validated = validate_medgemma_report(raw, config["report"])
         entry = {
             "panel_number": record["panel_number"],
@@ -294,6 +331,8 @@ def run_screening(
             "image": record["image"],
             "sha256": record["sha256"],
             "axial_interval": record.get("axial_interval"),
+            "prompt_sha256": sha256_of_text(panel_prompt),
+            "rag_context_sha256": rag_context.get("context_sha256") if rag_context.get("enabled") is True else None,
             "report": validated,
         }
         panel_reports.append(entry)
@@ -310,6 +349,7 @@ def run_screening(
     raw_report = _aggregate_panel_reports(panel_reports)
     durations = {
         "panel_generation": round(panel_duration, 4),
+        "rag_retrieval": round(rag_duration, 4),
         "panel_inference": inference_timings,
         "medgemma_inference": round(sum(x["seconds"] for x in inference_timings), 4),
         "screening_total": round(time.monotonic() - total_started, 4),
@@ -328,6 +368,8 @@ def run_screening(
             "any_positive_else_any_inconclusive_else_all_negative; "
             "minimum_confidence_among_determining_reports"
         ),
+        rag_context=rag_context,
+        prompt_audit=prompt_audit,
     )
     report_path = output_dir / REPORT_FILENAME
     temp_path = output_dir / f".{REPORT_FILENAME}.tmp"

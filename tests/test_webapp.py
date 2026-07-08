@@ -238,6 +238,22 @@ def test_benchmark_upload_maps_files_to_cases(monkeypatch, tmp_path):
     assert len(list((root / "0002").iterdir())) == 1
 
 
+def test_benchmark_manifest_accepts_authorized_rag_scenarios():
+    import json
+
+    for scenario in ("baseline", "volumetric", "rag", "volumetric_rag"):
+        parsed = server._parse_benchmark_manifest(
+            json.dumps({
+                "dataset_name": "Coorte",
+                "dataset_kind": "positive",
+                "scenario": scenario,
+                "cases": [{"id": "c1", "label": "positive", "file_indices": [0]}],
+            }),
+            file_count=1,
+        )
+        assert parsed["scenario"] == scenario
+
+
 def test_benchmark_upload_accepts_more_than_default_starlette_file_cap(monkeypatch, tmp_path):
     """Starlette limita multipart a max_files=1000 por padrão; um dataset de
     benchmark real (muitos exames x muitas fatias) estoura isso facilmente.

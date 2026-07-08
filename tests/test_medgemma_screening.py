@@ -2,14 +2,17 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from dtwin.core import PipelineError, sha256_of
+from dtwin.medgemma_client import load_screening_config
 from dtwin.medgemma_screening import (
     _aggregate_panel_reports,
     _authoritative_panels,
     main,
     run_screening,
 )
+from dtwin.rag.index import build_bm25_index
 
 
 class TestOnlyClient:
@@ -29,6 +32,17 @@ class TestOnlyClient:
         }
 
 
+class RagAwareTestClient(TestOnlyClient):
+    def __init__(self):
+        self.prompts = []
+
+    def generate(self, panel_path, prompt):
+        self.prompts.append(prompt)
+        assert "CONTEXTO RAG TEXTUAL DE APOIO" in prompt
+        assert "não substitui a análise da imagem" in prompt
+        return super().generate(panel_path, prompt)
+
+
 def _args(synthetic_case, tmp_path):
     return {
         "volume_path": synthetic_case.volume,
@@ -37,6 +51,73 @@ def _args(synthetic_case, tmp_path):
         "medgemma_config_path": "configs/medgemma_4b.yaml",
         "output_dir": tmp_path / "screening",
     }
+
+
+def _write_rag_fixture_repo(tmp_path):
+    repo = tmp_path / "rag_repo"
+    corpus = repo / "rag" / "corpus" / "test"
+    chunks_dir = corpus / "chunks"
+    chunks_dir.mkdir(parents=True)
+    chunk = {
+        "chunk_id": "hcc::c1",
+        "doc_id": "hcc",
+        "title": "HCC MRI",
+        "section": "Criteria",
+        "text": "HCC can show arterial phase hyperenhancement, washout and enhancing capsule.",
+        "sha256": "sha-hcc",
+        "categories": ["hcc", "li_rads"],
+        "priority": "core",
+        "url": "https://example.org/hcc",
+        "pmcid": "PMC_HCC",
+        "doi": "10.0000/hcc",
+    }
+    (chunks_dir / "hcc__c1.json").write_text(json.dumps(chunk), encoding="utf-8")
+    (corpus / "manifest.json").write_text(
+        json.dumps({
+            "schema": "argos-rag-corpus-v1",
+            "corpus_version": "screening_rag_test_v1",
+            "chunks": [{
+                "chunk_id": chunk["chunk_id"],
+                "doc_id": chunk["doc_id"],
+                "path": "chunks/hcc__c1.json",
+                "sha256": chunk["sha256"],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    build_bm25_index(corpus_dir=corpus, out_dir=repo / "rag" / "index" / "test")
+    eval_path = repo / "docs" / "rag" / "retrieval_eval_v1.yaml"
+    eval_path.parent.mkdir(parents=True)
+    eval_path.write_text(
+        yaml.safe_dump({
+            "schema": "argos-rag-retrieval-eval-v1",
+            "queries": [{
+                "id": "hcc_aphe_washout_capsule",
+                "query": "arterial washout capsule HCC",
+                "expected_categories": ["hcc"],
+            }],
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    configs = repo / "configs"
+    configs.mkdir()
+    config = load_screening_config("configs/medgemma_4b.yaml")
+    config["rag"] = {
+        "enabled": True,
+        "index_path": "rag/index/test/bm25_index.json",
+        "retrieval_eval": "docs/rag/retrieval_eval_v1.yaml",
+        "top_k": 1,
+        "max_sources": 2,
+        "max_chunk_chars": 160,
+        "min_score": 0.0,
+        "query_ids": ["hcc_aphe_washout_capsule"],
+    }
+    config_path = configs / "medgemma_rag_test.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"medgemma_screening": config}, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def test_panel_only_never_creates_fake_report(synthetic_case, tmp_path):
@@ -65,6 +146,32 @@ def test_full_flow_persists_traceable_pending_review_report(synthetic_case, tmp_
     assert len(report["screening_config_sha256"]) == 64
     assert report["durations_seconds"]["panel_generation"] >= 0
     assert report["durations_seconds"]["screening_total"] >= 0
+
+
+def test_full_flow_with_rag_persists_context_and_prompt_audit(synthetic_case, tmp_path):
+    config_path = _write_rag_fixture_repo(tmp_path)
+    client = RagAwareTestClient()
+    args = _args(synthetic_case, tmp_path)
+    args["medgemma_config_path"] = config_path
+    result = run_screening(
+        **args,
+        visible_phi_confirmed=True,
+        client=client,
+    )
+    out = tmp_path / "screening"
+    report = json.loads((out / "medgemma_report.json").read_text("utf-8"))
+    rag_context = json.loads((out / "rag_context.json").read_text("utf-8"))
+    assert result["status"] == "pending_review"
+    assert len(client.prompts) == 1
+    assert report["rag"]["enabled"] is True
+    assert report["rag"]["context_file"] == "rag_context.json"
+    assert report["rag"]["context_sha256"] == rag_context["context_sha256"]
+    assert report["rag"]["source_count"] == 1
+    assert report["prompt_audit"]["enabled"] is True
+    assert len(report["prompt_audit"]["final_prompt_sha256"]) == 64
+    assert report["panel_reports"][0]["rag_context_sha256"] == rag_context["context_sha256"]
+    assert len(report["panel_reports"][0]["prompt_sha256"]) == 64
+    assert report["durations_seconds"]["rag_retrieval"] >= 0
 
 
 def test_full_flow_requires_visible_phi_confirmation(synthetic_case, tmp_path):
