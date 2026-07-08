@@ -1,0 +1,133 @@
+# ARGOS RAG retrieval evaluation v1
+#
+# Objetivo:
+#   Validar se o índice lexical BM25 recupera fontes coerentes para perguntas
+#   clínicas-semente antes de qualquer integração com o MedGemma.
+#
+# Importante:
+#   Este arquivo não contém texto de artigos nem dados de pacientes. Ele contém
+#   apenas consultas, categorias esperadas e critérios de aceite do retriever.
+
+schema: argos-rag-retrieval-eval-v1
+dataset_version: liver_mri_rag_retrieval_eval_v1
+corpus_version: liver_mri_rag_v1
+language: en
+default_top_k: 5
+acceptance:
+  min_pass_rate: 0.85
+  min_category_hit_rate: 0.85
+  max_empty_results: 0
+  require_all_queries_pass: false
+
+queries:
+  - id: hcc_aphe_washout_capsule
+    query: "MRI HCC arterial phase hyperenhancement washout enhancing capsule LI-RADS"
+    intent: "Retrieve HCC imaging criteria and LI-RADS major features."
+    expected_categories: [hcc, li_rads]
+    expected_doc_ids: [argos_rag_v1_010, argos_rag_v1_011, argos_rag_v1_012, argos_rag_v1_013]
+    expected_terms: [arterial, washout, capsule]
+
+  - id: hcc_ancillary_features
+    query: "LI-RADS ancillary MRI features hepatocellular carcinoma diffusion hepatobiliary phase"
+    intent: "Retrieve ancillary MRI features for HCC risk stratification."
+    expected_categories: [hcc, li_rads]
+    expected_doc_ids: [argos_rag_v1_011, argos_rag_v1_013]
+    expected_terms: [ancillary, diffusion, hepatobiliary]
+
+  - id: cirrhosis_hcc_guideline_context
+    query: "AASLD noninvasive diagnosis HCC MRI arterial enhancement washout cirrhosis"
+    intent: "Retrieve guideline-context HCC diagnostic criteria."
+    expected_categories: [hcc, aasld, li_rads]
+    expected_doc_ids: [argos_rag_v1_012, argos_rag_v1_013]
+    expected_terms: [hcc, arterial, washout]
+
+  - id: hemangioma_t2_fill_in
+    query: "hepatic hemangioma MRI very high T2 peripheral nodular enhancement progressive fill-in"
+    intent: "Retrieve classic hemangioma MRI appearance."
+    expected_categories: [hemangioma, benign_liver_lesions]
+    expected_doc_ids: [argos_rag_v1_005, argos_rag_v1_022, argos_rag_v1_035]
+    expected_terms: [hemangioma, t2, enhancement]
+
+  - id: fnh_central_scar_hepatobiliary
+    query: "focal nodular hyperplasia MRI central scar hepatobiliary phase gadoxetic acid"
+    intent: "Retrieve FNH MRI features and hepatobiliary phase behavior."
+    expected_categories: [fnh, benign_liver_lesions, gadoxetic_acid, hepatobiliary_phase]
+    expected_doc_ids: [argos_rag_v1_005, argos_rag_v1_007, argos_rag_v1_035]
+    expected_terms: [focal, nodular, hyperplasia]
+
+  - id: hepatic_adenoma_subtypes
+    query: "hepatocellular adenoma MRI subtype inflammatory HNF1A beta-catenin hemorrhage"
+    intent: "Retrieve hepatic adenoma subtype and MRI discussion."
+    expected_categories: [hepatic_adenoma, benign_liver_lesions]
+    expected_doc_ids: [argos_rag_v1_005, argos_rag_v1_006]
+    expected_terms: [adenoma, subtype]
+
+  - id: metastases_rim_diffusion
+    query: "liver metastases MRI diffusion weighted imaging gadoxetic acid hepatobiliary phase detection"
+    intent: "Retrieve metastatic liver lesion MRI detection and DWI/hepatobiliary material."
+    expected_categories: [metastases, dwi_adc, hepatobiliary_phase]
+    expected_doc_ids: [argos_rag_v1_027, argos_rag_v1_040]
+    expected_terms: [metastases, diffusion, hepatobiliary]
+
+  - id: cholangiocarcinoma_delayed_enhancement
+    query: "intrahepatic cholangiocarcinoma MRI delayed enhancement capsular retraction diffusion"
+    intent: "Retrieve cholangiocarcinoma MRI features."
+    expected_categories: [cholangiocarcinoma, differential_diagnosis]
+    expected_doc_ids: [argos_rag_v1_023, argos_rag_v1_024]
+    expected_terms: [cholangiocarcinoma, delayed, enhancement]
+
+  - id: dwi_adc_benign_malignant
+    query: "DWI ADC differentiation benign malignant focal liver lesion MRI"
+    intent: "Retrieve DWI/ADC role in focal liver lesion differentiation."
+    expected_categories: [dwi_adc, benign_vs_malignant]
+    expected_doc_ids: [argos_rag_v1_020, argos_rag_v1_005]
+    expected_terms: [dwi, adc, malignant]
+
+  - id: gadoxetic_hepatobiliary_phase
+    query: "gadoxetic acid hepatobiliary phase liver MRI focal lesion hypointense hyperintense"
+    intent: "Retrieve hepatobiliary phase and gadoxetic acid material."
+    expected_categories: [gadoxetic_acid, hepatobiliary_phase, liver_mri_protocol]
+    expected_doc_ids: [argos_rag_v1_007, argos_rag_v1_008, argos_rag_v1_009]
+    expected_terms: [gadoxetic, hepatobiliary, phase]
+
+  - id: dynamic_contrast_phases
+    query: "liver MRI protocol arterial portal venous delayed hepatobiliary phases focal liver lesion"
+    intent: "Retrieve dynamic liver MRI protocol and phase timing."
+    expected_categories: [liver_mri_protocol, dynamic_enhancement]
+    expected_doc_ids: [argos_rag_v1_001, argos_rag_v1_002, argos_rag_v1_038]
+    expected_terms: [arterial, portal, delayed]
+
+  - id: arterial_phase_motion_artifact
+    query: "arterial phase liver MRI motion artifact transient severe respiratory motion gadoxetic acid"
+    intent: "Retrieve arterial phase quality/artifact discussion."
+    expected_categories: [motion_artifacts, arterial_phase, liver_mri_protocol]
+    expected_doc_ids: [argos_rag_v1_038, argos_rag_v1_039]
+    expected_terms: [arterial, motion, artifact]
+
+  - id: pseudolesion_perfusion_pitfall
+    query: "liver MRI pseudolesion perfusion anomaly arterioportal shunt pitfall focal lesion"
+    intent: "Retrieve pseudolesions and perfusion-related mimickers."
+    expected_categories: [pseudolesions, pitfalls, benign_vs_malignant]
+    expected_doc_ids: [argos_rag_v1_029, argos_rag_v1_030, argos_rag_v1_031]
+    expected_terms: [pseudolesion, perfusion, pitfall]
+
+  - id: cystic_liver_lesion
+    query: "cystic liver lesion MRI biliary cystadenoma hydatid abscess differential"
+    intent: "Retrieve cystic liver lesion differential diagnosis."
+    expected_categories: [cystic_liver_lesions, benign_liver_lesions]
+    expected_doc_ids: [argos_rag_v1_028, argos_rag_v1_041]
+    expected_terms: [cystic, liver, lesion]
+
+  - id: inflammatory_pseudotumor_mimicker
+    query: "inflammatory pseudotumor liver MRI mimicker malignancy delayed enhancement"
+    intent: "Retrieve inflammatory liver mimicker material."
+    expected_categories: [inflammatory_mimickers, mimickers]
+    expected_doc_ids: [argos_rag_v1_041]
+    expected_terms: [inflammatory, pseudotumor]
+
+  - id: benign_vs_malignant_general
+    query: "MRI features differentiate benign malignant focal liver lesions enhancement diffusion T2"
+    intent: "Retrieve broad benign-vs-malignant focal liver lesion review material."
+    expected_categories: [benign_vs_malignant, general_focal_liver_lesions_mri]
+    expected_doc_ids: [argos_rag_v1_001, argos_rag_v1_002, argos_rag_v1_003, argos_rag_v1_005]
+    expected_terms: [benign, malignant, enhancement]
