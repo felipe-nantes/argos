@@ -197,6 +197,7 @@ def generate_liver_panel_multiphase(
     """
     liver_mask_path = Path(liver_mask_path)
     case_manifest_path, output_dir = Path(case_manifest_path), Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     panel_cfg = screening_config.get("panel", {})
     channel_map = _resolve_channel_map(panel_cfg)
 
@@ -420,7 +421,6 @@ def generate_liver_panel_multiphase(
     )
     canvas.paste(notice, (3 * tile_size, 2 * tile_size))
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     panel_path = output_dir / PANEL_FILENAME
     canvas.save(panel_path, format="PNG", optimize=True)
     with Image.open(panel_path) as exported:

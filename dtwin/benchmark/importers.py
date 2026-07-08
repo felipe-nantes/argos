@@ -19,6 +19,22 @@ from .models import EvaluationCase, GroundTruthLabel, InferenceCase
 
 
 SUPPORTED_FORMATS = {"DICOM", "NIFTI", "MIDS"}
+FORBIDDEN_INFERENCE_KEYS = {"label", "lesion_mask", "lesion_mask_path", "annotations"}
+FORBIDDEN_MANIFEST_KEYS = {
+    "accessionnumber",
+    "annotationmanifest",
+    "annotations",
+    "diagnosis",
+    "diagnostico",
+    "groundtruth",
+    "label",
+    "lesionmask",
+    "lesionmaskpath",
+    "patientbirthdate",
+    "patientid",
+    "patientname",
+}
+FORBIDDEN_MANIFEST_PREFIXES = ("patient",)
 
 
 @dataclass(frozen=True)
@@ -56,6 +72,16 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PipelineError(f"{label} inválido ({path}): {exc}") from exc
+    if not isinstance(value, dict):
+        raise PipelineError(f"{label} deve ser um objeto: {path}")
+    return value
+
+
 def _inside(root: Path, candidate: str | Path | None, *, required: bool = False) -> Path | None:
     if candidate in (None, ""):
         if required:
@@ -70,6 +96,25 @@ def _inside(root: Path, candidate: str | Path | None, *, required: bool = False)
     if not path.exists():
         raise PipelineError(f"Entrada não encontrada: {path}")
     return path
+
+
+def _normalized_key(value: object) -> str:
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _forbidden_manifest_paths(value: Any, prefix: str = "$") -> list[str]:
+    """Localiza campos que podem carregar PHI ou ground truth no manifesto de inferência."""
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = _normalized_key(key)
+            if normalized in FORBIDDEN_MANIFEST_KEYS or normalized.startswith(FORBIDDEN_MANIFEST_PREFIXES):
+                found.append(f"{prefix}.{key}")
+            found.extend(_forbidden_manifest_paths(child, f"{prefix}.{key}"))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found.extend(_forbidden_manifest_paths(child, f"{prefix}[{index}]"))
+    return found
 
 
 def load_dataset_manifest(path: Path) -> list[DatasetCase]:
@@ -117,7 +162,7 @@ def load_dataset_manifest(path: Path) -> list[DatasetCase]:
             ground_truth = item.get("ground_truth") or item.get("lesion_annotations") or {}
             if not isinstance(inference, dict) or not isinstance(ground_truth, dict):
                 raise PipelineError(f"Caso {name}/{case_id} possui seções inválidas.")
-            forbidden = {"label", "lesion_mask", "lesion_mask_path", "annotations"}.intersection(inference)
+            forbidden = FORBIDDEN_INFERENCE_KEYS.intersection(inference)
             if forbidden:
                 raise PipelineError(f"Ground truth vazou para inference em {name}/{case_id}: {sorted(forbidden)}")
             source = InferenceSource(
@@ -190,9 +235,10 @@ def validate_inference_source(source: InferenceSource) -> dict[str, Any]:
 
 def _sanitized_manifest(source: InferenceSource, volume: Path) -> dict[str, Any]:
     image = sitk.ReadImage(str(volume))
+    medgemma_compatible = source.case_id.startswith("anon-")
     return {
         "case_id": source.case_id,
-        "policy": "public_dataset_sanitized",
+        "policy": "anonymize" if medgemma_compatible else "public_dataset_sanitized",
         "modality": "MR",
         "regulatory_state": "PESQUISA",
         "size_xyz": list(image.GetSize()),
@@ -200,7 +246,75 @@ def _sanitized_manifest(source: InferenceSource, volume: Path) -> dict[str, Any]
         "dataset": source.dataset,
         "input_format": source.input_format,
         "volume_sha256": sha256_of(volume),
+        "benchmark_manifest_generated": True,
+        "caveats": [
+            "Manifesto sintético do benchmark para NIfTI/MIDS sem manifesto anonimizado explícito.",
+            "PHI gravada nos pixels (burned-in) NÃO é detectada automaticamente; exige verificação humana.",
+        ],
     }
+
+
+def _candidate_sanitized_manifest(source: InferenceSource, prepared_manifest: Path | None = None) -> Path | None:
+    if source.sanitized_manifest_path:
+        return source.sanitized_manifest_path
+    if source.input_format in {"NIFTI", "MIDS"} and source.volume_path:
+        adjacent = source.volume_path.parent / "manifest.json"
+        if adjacent.is_file():
+            return adjacent
+    if prepared_manifest and prepared_manifest.is_file():
+        return prepared_manifest
+    return None
+
+
+def _float_lists_close(first: list[Any], second: tuple[float, ...], tolerance: float = 1e-5) -> bool:
+    if len(first) != len(second):
+        return False
+    try:
+        return all(abs(float(a) - float(b)) <= tolerance for a, b in zip(first, second))
+    except (TypeError, ValueError):
+        return False
+
+
+def _validated_anonymized_manifest(source: InferenceSource, manifest_path: Path, volume: Path) -> dict[str, Any]:
+    manifest = _read_json_object(manifest_path, "Manifesto sanitizado")
+    forbidden = _forbidden_manifest_paths(manifest)
+    if forbidden:
+        raise PipelineError(
+            "Manifesto sanitizado contém campo proibido ou potencial PHI: "
+            f"{sorted(forbidden)}"
+        )
+    original_case_id = str(manifest.get("case_id") or "")
+    effective_case_id = source.case_id if source.case_id.startswith("anon-") else original_case_id
+    if not effective_case_id.startswith("anon-"):
+        raise PipelineError("Manifesto sanitizado exige case_id anônimo ('anon-*').")
+    if manifest.get("policy") != "anonymize":
+        raise PipelineError("Manifesto sanitizado exige policy=anonymize.")
+    if manifest.get("regulatory_state") != "PESQUISA":
+        raise PipelineError("Manifesto sanitizado exige regulatory_state=PESQUISA.")
+    if str(manifest.get("modality", "")).upper() not in {"MR", "MRI"}:
+        raise PipelineError("Manifesto sanitizado exige modalidade RM (MR/MRI).")
+
+    image = sitk.ReadImage(str(volume))
+    expected_hash = sha256_of(volume)
+    declared_hash = str(manifest.get("volume_sha256") or "")
+    if declared_hash != expected_hash:
+        raise PipelineError("Manifesto sanitizado possui volume_sha256 ausente ou inconsistente.")
+    if "size_xyz" in manifest and [int(v) for v in manifest["size_xyz"]] != list(image.GetSize()):
+        raise PipelineError("Manifesto sanitizado possui size_xyz incompatível com o volume.")
+    if "spacing_xyz" in manifest and not _float_lists_close(list(manifest["spacing_xyz"]), image.GetSpacing()):
+        raise PipelineError("Manifesto sanitizado possui spacing_xyz incompatível com o volume.")
+
+    sanitized = dict(manifest)
+    sanitized["case_id"] = effective_case_id
+    if original_case_id and original_case_id != effective_case_id and original_case_id.startswith("anon-"):
+        sanitized["source_manifest_case_id"] = original_case_id
+    sanitized["policy"] = "anonymize"
+    sanitized["regulatory_state"] = "PESQUISA"
+    sanitized["dataset"] = source.dataset
+    sanitized["input_format"] = source.input_format
+    sanitized["volume_sha256"] = expected_hash
+    sanitized["sanitized_manifest_sha256"] = sha256_of(manifest_path)
+    return sanitized
 
 
 def prepare_inference_case(
@@ -231,7 +345,15 @@ def prepare_inference_case(
         shutil.copyfile(source.volume_path, case.volume)
         shutil.copyfile(source.organ_mask_path, case.mask_organ)
     validate_geometry(case.volume, case.mask_organ)
-    manifest = _sanitized_manifest(source, case.volume)
+    manifest_source = _candidate_sanitized_manifest(
+        source,
+        case.manifest if source.input_format == "DICOM" else None,
+    )
+    manifest = (
+        _validated_anonymized_manifest(source, manifest_source, case.volume)
+        if manifest_source
+        else _sanitized_manifest(source, case.volume)
+    )
     case.write_manifest(manifest)
     hashes = input_hashes(case.volume, case.mask_organ, case.manifest)
     return InferenceCase(

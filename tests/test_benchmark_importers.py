@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,7 @@ from dtwin.benchmark.importers import (
     prepare_inference_case,
     validate_geometry,
 )
-from dtwin.core import PipelineError
+from dtwin.core import PipelineError, sha256_of
 from tools.make_synthetic_case import write_dicom_series
 
 
@@ -21,12 +22,12 @@ def _image(path: Path, value=1, spacing=(1.0, 1.0, 2.0)):
     sitk.WriteImage(image, str(path))
 
 
-def _manifests(tmp_path, fmt="NIFTI", inference=None, ground_truth=None):
+def _manifests(tmp_path, fmt="NIFTI", inference=None, ground_truth=None, case_id="case-001"):
     root = tmp_path / "dataset"
     root.mkdir()
     labels = tmp_path / "labels.yaml"
     labels.write_text(yaml.safe_dump({"cases": [{
-        "case_id": "case-001", "label": "POSITIVE",
+        "case_id": case_id, "label": "POSITIVE",
         "inference": inference or {"volume": "volume.nii.gz", "organ_mask": "mask.nii.gz"},
         "ground_truth": ground_truth or {},
     }]}), encoding="utf-8")
@@ -50,6 +51,107 @@ def test_nifti_importer_physically_excludes_ground_truth(tmp_path):
     evaluation = attach_ground_truth(case, inference)
     assert evaluation.label.value == "positive"
     assert len(evaluation.protected_ground_truth_hashes["lesion_mask"]) == 64
+
+
+def test_nifti_importer_preserves_adjacent_anonymized_manifest(tmp_path):
+    root, manifest = _manifests(tmp_path, case_id="anon-benchmark001")
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+    (root / "manifest.json").write_text(json.dumps({
+        "case_id": "anon-source001",
+        "policy": "anonymize",
+        "modality": "MR",
+        "regulatory_state": "PESQUISA",
+        "size_xyz": [10, 8, 6],
+        "spacing_xyz": [1.0, 1.0, 2.0],
+        "volume_sha256": sha256_of(root / "volume.nii.gz"),
+        "software": "synthetic-test",
+    }), encoding="utf-8")
+
+    case = load_dataset_manifest(manifest)[0]
+    inference = prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+    data = json.loads(inference.manifest_path.read_text(encoding="utf-8"))
+
+    assert data["case_id"] == "anon-benchmark001"
+    assert data["source_manifest_case_id"] == "anon-source001"
+    assert data["policy"] == "anonymize"
+    assert data["dataset"] == "TEST"
+    assert data["input_format"] == "NIFTI"
+    assert len(data["sanitized_manifest_sha256"]) == 64
+
+
+def test_nifti_importer_rejects_sanitized_manifest_with_wrong_policy(tmp_path):
+    root, manifest = _manifests(
+        tmp_path,
+        case_id="anon-benchmark001",
+        inference={
+            "volume": "volume.nii.gz",
+            "organ_mask": "mask.nii.gz",
+            "sanitized_manifest": "bad_manifest.json",
+        },
+    )
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+    (root / "bad_manifest.json").write_text(json.dumps({
+        "case_id": "anon-source001",
+        "policy": "public_dataset_sanitized",
+        "modality": "MR",
+        "regulatory_state": "PESQUISA",
+        "volume_sha256": sha256_of(root / "volume.nii.gz"),
+    }), encoding="utf-8")
+
+    case = load_dataset_manifest(manifest)[0]
+    with pytest.raises(PipelineError, match="policy=anonymize"):
+        prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+
+
+def test_nifti_importer_rejects_sanitized_manifest_with_phi_key(tmp_path):
+    root, manifest = _manifests(tmp_path, case_id="anon-benchmark001")
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+    (root / "manifest.json").write_text(json.dumps({
+        "case_id": "anon-source001",
+        "policy": "anonymize",
+        "modality": "MR",
+        "regulatory_state": "PESQUISA",
+        "volume_sha256": sha256_of(root / "volume.nii.gz"),
+        "patient_name": "Jane Example",
+    }), encoding="utf-8")
+
+    case = load_dataset_manifest(manifest)[0]
+    with pytest.raises(PipelineError, match="potencial PHI"):
+        prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+
+
+def test_nifti_importer_rejects_sanitized_manifest_with_wrong_volume_hash(tmp_path):
+    root, manifest = _manifests(tmp_path, case_id="anon-benchmark001")
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+    (root / "manifest.json").write_text(json.dumps({
+        "case_id": "anon-source001",
+        "policy": "anonymize",
+        "modality": "MR",
+        "regulatory_state": "PESQUISA",
+        "volume_sha256": "0" * 64,
+    }), encoding="utf-8")
+
+    case = load_dataset_manifest(manifest)[0]
+    with pytest.raises(PipelineError, match="volume_sha256"):
+        prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+
+
+def test_nifti_importer_generates_medgemma_compatible_manifest_for_anon_case(tmp_path):
+    root, manifest = _manifests(tmp_path, case_id="anon-generated001")
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+
+    case = load_dataset_manifest(manifest)[0]
+    inference = prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+    data = json.loads(inference.manifest_path.read_text(encoding="utf-8"))
+
+    assert data["case_id"] == "anon-generated001"
+    assert data["policy"] == "anonymize"
+    assert data["benchmark_manifest_generated"] is True
 
 
 def test_manifest_rejects_ground_truth_inside_inference(tmp_path):

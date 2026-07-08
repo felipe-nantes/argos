@@ -155,6 +155,7 @@ def generate_liver_panel(
     """
     volume_path, liver_mask_path = Path(volume_path), Path(liver_mask_path)
     case_manifest_path, output_dir = Path(case_manifest_path), Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     _require_file(volume_path, "Volume de RM")
     _require_file(liver_mask_path, "Máscara do fígado")
     case_manifest = _validate_case_manifest(case_manifest_path)
@@ -332,7 +333,6 @@ def generate_liver_panel(
     )
     canvas.paste(notice, (3 * tile_size, 2 * tile_size))
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     panel_path = output_dir / PANEL_FILENAME
     canvas.save(panel_path, format="PNG", optimize=True)
     with Image.open(panel_path) as exported:

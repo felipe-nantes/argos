@@ -9,6 +9,7 @@ from dtwin.benchmark.importers import load_dataset_manifest
 from dtwin.benchmark.models import BenchmarkStatus
 from dtwin.benchmark.runner import (
     ExperimentConfig,
+    _case_workspace_slug,
     classify_screening_failure,
     make_run_id,
     run_case,
@@ -54,6 +55,14 @@ def test_run_id_is_stable_and_filesystem_safe():
     assert make_run_id("abcdef123", "single phase / gray", datetime(2026, 7, 6, tzinfo=timezone.utc)) == (
         "20260706T000000Z_abcdef12_single-phase-gray"
     )
+
+
+def test_case_workspace_slug_is_short_and_deterministic():
+    first = _case_workspace_slug("dataset-with-a-very-long-name", "anon-case-with-a-very-long-name")
+    second = _case_workspace_slug("dataset-with-a-very-long-name", "anon-case-with-a-very-long-name")
+    assert first == second
+    assert first.startswith("case-")
+    assert len(first) <= 17
 
 
 def test_invalid_model_response_is_not_collapsed_into_generic_failure():

@@ -1,6 +1,7 @@
 """Runner compartilhável: inferência isolada, avaliação posterior e relatórios."""
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import re
@@ -61,6 +62,12 @@ def load_experiment_config(path: Path | None) -> ExperimentConfig:
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-")[:48] or "experiment"
+
+
+def _case_workspace_slug(dataset: str, case_id: str) -> str:
+    """Nome curto e determinístico para evitar estouro de caminho no Windows."""
+    digest = hashlib.sha256(f"{dataset}\0{case_id}".encode("utf-8")).hexdigest()[:12]
+    return f"case-{digest}"
 
 
 def make_run_id(commit: str | None, experiment: str, now: datetime | None = None) -> str:
@@ -177,7 +184,7 @@ def run_case(
 ) -> BenchmarkCaseResult:
     case_started = time.monotonic()
     import_started = time.monotonic()
-    workspace = run_dir / "workspaces" / _slug(f"{case.inference.dataset}-{case.inference.case_id}") / "inference"
+    workspace = run_dir / "workspaces" / _case_workspace_slug(case.inference.dataset, case.inference.case_id) / "inference"
     try:
         inference = prepare_inference_case(
             case.inference, workspace, profile_path=experiment.profile_path,
