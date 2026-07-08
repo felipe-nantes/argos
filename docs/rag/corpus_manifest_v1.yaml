@@ -1,0 +1,602 @@
+# ARGOS RAG corpus manifest v1
+#
+# Purpose:
+#   Candidate knowledge base for the first RAG experiment focused on focal liver
+#   lesions in MRI. This is a planning/audit manifest, not downloaded article text.
+#
+# Use policy:
+#   - Do not commit patient data here.
+#   - Do not copy closed guideline text into the repo.
+#   - Felipe approved all listed sources for corpus v1 research use.
+#   - Preserve URL/PMCID/DOI provenance for every ingested chunk.
+
+corpus_version: liver_mri_rag_v1
+created_for: ARGOS / MedGemma liver MRI RAG
+language: en
+clinical_scope:
+  modality: MRI
+  organ: liver
+  task: focal_liver_lesion_detection_and_characterization_support
+regulatory_scope: RESEARCH
+decisions:
+  corpus_option: "B without EASL"
+  include_guidelines_as: "public/open review articles or original summaries only"
+  primary_rag_use: "grounding, consistency, differential support, abstention"
+  primary_benchmark_label: "binary positive/negative exam labels"
+  not_validated_for:
+    - clinical_diagnosis
+    - fine_segmental_localization
+    - claim_that_model_reasoning_is_clinically_correct
+license_policy:
+  default_status: approved_by_felipe_for_research_corpus_v1
+  approval_statement: "Felipe approved all 41 listed sources for corpus v1 research ingestion."
+  ingest_rule: "ingest_approved_sources_with_full_provenance; do_not_copy_closed_guideline_text_beyond_approved_sources"
+  allowed_sources:
+    - PMC
+    - open_access_journals
+    - team_authored_summaries_with_citations
+
+coverage_targets:
+  general_focal_liver_lesions_mri: covered
+  benign_liver_lesions: covered
+  hcc: covered
+  li_rads: covered
+  aasld: covered
+  gadoxetic_acid_hepatobiliary_phase: covered
+  dwi_adc: covered
+  hemangioma: covered
+  fnh: covered
+  hepatic_adenoma: covered
+  metastases: covered
+  cholangiocarcinoma: covered
+  cystic_liver_lesions: covered
+  pseudolesions_pitfalls: covered
+  couinaud_segmental_anatomy: covered
+  liver_mri_protocol: covered
+  inflammatory_mimickers: covered
+  normal_liver_mri: partial
+remaining_non_blocking_gaps:
+  - "Dedicated normal multiparametric liver MRI enhancement pattern review."
+  - "Dedicated hepatic abscess/infectious mimicker MRI review."
+  - "Dedicated liver MRI artifacts/image-quality pitfalls review."
+
+priority_legend:
+  core: "Recommended for corpus v1 ingestion."
+  support: "Useful supporting/redundant source; include if chunk quality is acceptable."
+  optional: "Not required for v1 unless a specific gap remains."
+
+articles:
+  - id: argos_rag_v1_001
+    pmcid: PMC4528273
+    pmid: "26261689"
+    doi: 10.4254/wjh.v7.i16.1987
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC4528273/
+    title: "Focal liver lesions: Practical magnetic resonance imaging approach."
+    journal: World J Hepatol
+    year: 2015
+    priority: core
+    categories: [general_focal_liver_lesions_mri, benign_vs_malignant, mri_sequences, dynamic_enhancement]
+    role: "Broad MRI approach for focal liver lesion characterization."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_002
+    pmcid: PMC3462338
+    pmid: "23049491"
+    doi: 10.2174/157340512800672216
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3462338/
+    title: "MRI of Focal Liver Lesions."
+    journal: Curr Med Imaging Rev
+    year: 2012
+    priority: core
+    categories: [general_focal_liver_lesions_mri, benign_vs_malignant, mri_sequences]
+    role: "Foundational review of MRI appearances of focal liver lesions."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_003
+    pmcid: PMC11229941
+    pmid: "38983841"
+    doi: 10.4329/wjr.v16.i6.139
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC11229941/
+    title: "Imaging features and management of focal liver lesions."
+    journal: World J Radiol
+    year: 2024
+    priority: core
+    categories: [general_focal_liver_lesions_mri, management_context, benign_vs_malignant]
+    role: "Updated general review linking imaging features and management."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_004
+    pmcid: PMC12537391
+    pmid: "41127018"
+    doi: 10.3389/fonc.2025.1630424
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC12537391/
+    title: "MRI management of focal liver lesions: what a beginner cannot fail to know."
+    journal: Front Oncol
+    year: 2025
+    priority: core
+    categories: [general_focal_liver_lesions_mri, management_context, mri_protocol]
+    role: "Didactic review useful for robust chunking and beginner-safe concepts."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_005
+    pmcid: PMC9157713
+    pmid: "35721295"
+    doi: 10.4254/wjh.v14.i5.923
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC9157713/
+    title: "Benign focal liver lesions: The role of magnetic resonance imaging."
+    journal: World J Hepatol
+    year: 2022
+    priority: core
+    categories: [benign_liver_lesions, hemangioma, fnh, hepatic_adenoma, cystic_liver_lesions]
+    role: "Core benign lesion review to improve specificity."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_006
+    pmcid: PMC11524743
+    pmid: "39470338"
+    doi: 10.1097/HC9.0000000000000560
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC11524743/
+    title: "Practical approach to diagnose and manage benign liver masses."
+    journal: Hepatol Commun
+    year: 2024
+    priority: support
+    categories: [benign_liver_lesions, management_context, differential_diagnosis]
+    role: "Clinical management context for benign masses; useful as support."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_007
+    pmcid: PMC10663390
+    pmid: "37199193"
+    doi: 10.1097/HEP.0000000000000466
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC10663390/
+    title: "AASLD Practice Guidance on prevention, diagnosis, and treatment of hepatocellular carcinoma."
+    journal: Hepatology
+    year: 2023
+    priority: core
+    categories: [aasld, hcc, surveillance, diagnosis_guidance]
+    role: "AASLD HCC guidance; use cautiously according to license policy."
+    license_status: approved_by_felipe_for_research_corpus_v1
+    ingest_note: "Prefer cited summary chunks if full-text redistribution is restricted."
+
+  - id: argos_rag_v1_008
+    pmcid: PMC8340355
+    pmid: "34386205"
+    doi: 10.1002/cld.1075
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC8340355/
+    title: "Diagnostic Criteria and LI-RADS for Hepatocellular Carcinoma."
+    journal: Clin Liver Dis (Hoboken)
+    year: 2021
+    priority: core
+    categories: [hcc, li_rads, diagnosis_guidance]
+    role: "Concise LI-RADS/HCC diagnostic criteria overview."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_009
+    pmcid: PMC11604338
+    pmid: "39608373"
+    doi: 10.3348/kjr.2024.0161
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC11604338/
+    title: "LI-RADS: Current Status and Future Directions."
+    journal: Korean J Radiol
+    year: 2024
+    priority: core
+    categories: [li_rads, hcc, diagnosis_guidance]
+    role: "Updated LI-RADS status review."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_010
+    pmcid: PMC4463351
+    pmid: "24808419"
+    doi: 10.5152/dir.2014.13370
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC4463351/
+    title: "MRI of hepatocellular carcinoma: an update of current practices."
+    journal: Diagn Interv Radiol
+    year: 2014
+    priority: core
+    categories: [hcc, mri_sequences, dynamic_enhancement, washout]
+    role: "MRI-focused HCC review."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_011
+    pmcid: PMC5829459
+    pmid: "29507710"
+    doi: 10.4329/wjr.v10.i2.9
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5829459/
+    title: "Magnetic resonance imaging ancillary features used in Liver Imaging Reporting and Data System: An illustrative review."
+    journal: World J Radiol
+    year: 2018
+    priority: core
+    categories: [li_rads, ancillary_features, hcc, mri_sequences]
+    role: "LI-RADS ancillary features for nuanced RAG evidence."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_012
+    pmcid: PMC6759428
+    pmid: "30759967"
+    doi: 10.3350/cmh.2018.0090
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC6759428/
+    title: "Comparison of international guidelines for noninvasive diagnosis of hepatocellular carcinoma: 2018 update."
+    journal: Clin Mol Hepatol
+    year: 2019
+    priority: support
+    categories: [hcc, diagnosis_guidance, guideline_comparison]
+    role: "Guideline comparison context; useful for avoiding over-specific claims."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_013
+    pmcid: PMC6759431
+    pmid: "30661336"
+    doi: 10.3350/cmh.2018.0107
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC6759431/
+    title: "Gadoxetic acid-enhanced magnetic resonance imaging: Hepatocellular carcinoma and mimickers."
+    journal: Clin Mol Hepatol
+    year: 2019
+    priority: core
+    categories: [gadoxetic_acid, hepatobiliary_phase, hcc, mimickers]
+    role: "Core source for HCC and mimickers under hepatobiliary contrast."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_014
+    pmcid: PMC7446010
+    pmid: "32462892"
+    doi: 10.1259/bjr.20190989
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC7446010/
+    title: "Patterns of enhancement in the hepatobiliary phase of gadoxetic acid-enhanced MRI."
+    journal: Br J Radiol
+    year: 2020
+    priority: core
+    categories: [gadoxetic_acid, hepatobiliary_phase, enhancement_patterns]
+    role: "Hepatobiliary phase enhancement pattern reference."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_015
+    pmcid: PMC3443279
+    pmid: "22700119"
+    doi: 10.1007/s13244-012-0179-7
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3443279/
+    title: "Focal hepatic lesions in Gd-EOB-DTPA enhanced MRI: the atlas."
+    journal: Insights Imaging
+    year: 2012
+    priority: core
+    categories: [gadoxetic_acid, hepatobiliary_phase, lesion_atlas, differential_diagnosis]
+    role: "Atlas-style reference for gadoxetic MRI."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_016
+    pmcid: PMC4341386
+    pmid: "25741105"
+    doi: 10.1590/0100-3984.2013.1867
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC4341386/
+    title: "Hepatobiliary contrast agents: differential diagnosis of focal hepatic lesions, pitfalls and other indications."
+    journal: Radiol Bras
+    year: 2014
+    priority: core
+    categories: [hepatobiliary_phase, gadoxetic_acid, pitfalls, differential_diagnosis]
+    role: "Contrast-agent differential and pitfalls source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_017
+    pmcid: PMC5612839
+    pmid: "28989564"
+    doi: 10.4254/wjh.v9.i26.1081
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5612839/
+    title: "Diffusion weighted magnetic resonance imaging of liver: Principles, clinical applications and recent updates."
+    journal: World J Hepatol
+    year: 2017
+    priority: core
+    categories: [dwi_adc, mri_sequences, lesion_detection]
+    role: "DWI principles and clinical applications."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_018
+    pmcid: PMC3419871
+    pmid: "22900131"
+    doi: 10.4329/wjr.v4.i7.302
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3419871/
+    title: "Diffusion-weighted MRI in a liver protocol: its role in focal lesion detection."
+    journal: World J Radiol
+    year: 2012
+    priority: core
+    categories: [dwi_adc, liver_mri_protocol, lesion_detection]
+    role: "DWI role in liver protocol and focal lesion detection."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_019
+    pmcid: PMC2791273
+    pmid: "19998501"
+    doi: 10.3748/wjg.15.5805
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC2791273/
+    title: "Role of diffusion-weighted magnetic resonance imaging in the differential diagnosis of focal hepatic lesions."
+    journal: World J Gastroenterol
+    year: 2009
+    priority: core
+    categories: [dwi_adc, differential_diagnosis, benign_vs_malignant]
+    role: "DWI for focal lesion differential diagnosis."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_020
+    pmcid: PMC5037977
+    pmid: "27708485"
+    doi: 10.5455/aim.2016.24.244-247
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5037977/
+    title: "DWI/ADC in Differentiation of Benign from Malignant Focal Liver Lesion."
+    journal: Acta Inform Med
+    year: 2016
+    priority: support
+    categories: [dwi_adc, benign_vs_malignant]
+    role: "Support source for ADC/differentiation language."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_021
+    pmcid: PMC10972168
+    pmid: "38541175"
+    doi: 10.3390/medicina60030449
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC10972168/
+    title: "Hepatic Hemangioma: Review of Imaging and Therapeutic Strategies."
+    journal: Medicina (Kaunas)
+    year: 2024
+    priority: core
+    categories: [hemangioma, benign_liver_lesions, differential_diagnosis]
+    role: "Core hemangioma imaging and differential source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_022
+    pmcid: PMC11413281
+    pmid: "39298015"
+    doi: 10.1186/s13244-024-01745-1
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC11413281/
+    title: "I thought it was a hemangioma! A pictorial essay about common and uncommon liver hemangiomas' mimickers."
+    journal: Insights Imaging
+    year: 2024
+    priority: core
+    categories: [hemangioma, mimickers, pitfalls, differential_diagnosis]
+    role: "Hemangioma mimickers; high value for false-positive reduction."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_023
+    pmcid: PMC10851072
+    pmid: "38343607"
+    doi: 10.14218/JCTH.2023.00265
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC10851072/
+    title: "Focal Nodular Hyperplasia: A Comprehensive Review with a Particular Focus on Pathogenesis and Complications."
+    journal: J Clin Transl Hepatol
+    year: 2024
+    priority: core
+    categories: [fnh, benign_liver_lesions]
+    role: "Comprehensive FNH context."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_024
+    pmcid: PMC3745063
+    pmid: "23873903"
+    doi: 10.1259/bjr.20130299
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3745063/
+    title: "Focal nodular hyperplasia: characterisation at gadoxetic acid-enhanced MRI and diffusion-weighted MRI."
+    journal: Br J Radiol
+    year: 2013
+    priority: core
+    categories: [fnh, gadoxetic_acid, dwi_adc, hepatobiliary_phase]
+    role: "FNH MRI characterization with gadoxetic and DWI."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_025
+    pmcid: PMC8043715
+    pmid: "33868649"
+    doi: 10.1002/cld.996
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC8043715/
+    title: "Magnetic Resonance Imaging of Hepatic Adenoma Subtypes."
+    journal: Clin Liver Dis (Hoboken)
+    year: 2021
+    priority: core
+    categories: [hepatic_adenoma, benign_liver_lesions, subtype_characterization]
+    role: "Adenoma subtype MRI source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_026
+    pmcid: PMC3670428
+    pmid: "22674623"
+    doi: 10.1002/jmri.23701
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3670428/
+    title: "Characterization of hepatic adenoma and focal nodular hyperplasia with gadoxetic acid."
+    journal: J Magn Reson Imaging
+    year: 2012
+    priority: core
+    categories: [hepatic_adenoma, fnh, gadoxetic_acid, differential_diagnosis]
+    role: "FNH vs adenoma differentiation with gadoxetic acid."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_027
+    pmcid: PMC10600959
+    pmid: "37901445"
+    doi: 10.3748/wjg.v29.i36.5180
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC10600959/
+    title: "Liver metastases: The role of magnetic resonance imaging."
+    journal: World J Gastroenterol
+    year: 2023
+    priority: core
+    categories: [metastases, mri_sequences, dwi_adc, hepatobiliary_phase]
+    role: "Core MRI metastases source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_028
+    pmcid: PMC8870737
+    pmid: "35200560"
+    doi: 10.3390/curroncol29020061
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC8870737/
+    title: "Imaging Spectrum of Intrahepatic Mass-Forming Cholangiocarcinoma and Its Mimickers: How to Differentiate Them Using MRI."
+    journal: Curr Oncol
+    year: 2022
+    priority: core
+    categories: [cholangiocarcinoma, mimickers, differential_diagnosis, mri_sequences]
+    role: "Cholangiocarcinoma and mimickers source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_029
+    pmcid: PMC9287528
+    pmid: "35838923"
+    doi: 10.1186/s13244-022-01242-3
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC9287528/
+    title: "Cystic liver lesions: a pictorial review."
+    journal: Insights Imaging
+    year: 2022
+    priority: core
+    categories: [cystic_liver_lesions, benign_liver_lesions, differential_diagnosis]
+    role: "Cystic lesion differential source."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_030
+    pmcid: PMC8678815
+    pmid: "35046619"
+    doi: 10.3748/wjg.v27.i46.7894
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC8678815/
+    title: "Hepatic pseudolesions caused by alterations in intrahepatic hemodynamics."
+    journal: World J Gastroenterol
+    year: 2021
+    priority: core
+    categories: [pseudolesions, hemodynamics, pitfalls, normal_variants]
+    role: "Pseudolesion/hemodynamic false-positive reduction."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_031
+    pmcid: PMC3823389
+    pmid: "24228216"
+    doi: 10.4103/2156-7514.120803
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3823389/
+    title: "Concepts for Liver Segment Classification: Neither Old Ones nor New Ones, but a Comprehensive One."
+    journal: J Clin Imaging Sci
+    year: 2013
+    priority: core
+    categories: [couinaud_segmental_anatomy, liver_anatomy, localization]
+    role: "Segment classification source for approximate localization."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_032
+    pmcid: PMC12916557
+    pmid: "41727897"
+    doi: 10.3389/fsurg.2026.1743615
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC12916557/
+    title: "Radiology for surgeons: liver anatomy."
+    journal: Front Surg
+    year: 2026
+    priority: core
+    categories: [liver_anatomy, couinaud_segmental_anatomy, surgical_context]
+    role: "Applied liver anatomy for surgical/radiology interpretation."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_033
+    pmcid: PMC5376876
+    pmid: "28384848"
+    doi: 10.7860/JCDR/2017/25028.9453
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5376876/
+    title: "Surgical Implications of Portal Vein Variations and Liver Segmentations: A Recent Update."
+    journal: J Clin Diagn Res
+    year: 2017
+    priority: support
+    categories: [liver_anatomy, portal_vein_variants, couinaud_segmental_anatomy]
+    role: "Anatomic variant support for segmental reasoning."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_034
+    pmcid: PMC2999331
+    pmid: "21160685"
+    doi: 10.4329/wjr.v2.i8.309
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC2999331/
+    title: "Magnetic resonance imaging: Review of imaging techniques and overview of liver imaging."
+    journal: World J Radiol
+    year: 2010
+    priority: core
+    categories: [liver_mri_protocol, mri_sequences, technique_overview]
+    role: "Technical MRI overview for protocol and sequence chunks."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_035
+    pmcid: PMC5901158
+    pmid: "29692983"
+    doi: 10.2147/JHC.S154321
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5901158/
+    title: "Basic MRI for the liver oncologists and surgeons."
+    journal: J Hepatocell Carcinoma
+    year: 2017
+    priority: core
+    categories: [liver_mri_protocol, surgical_context, oncology_context, mri_sequences]
+    role: "Bridges MRI concepts for oncology/surgical users."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_036
+    pmcid: PMC3259375
+    pmid: "22347973"
+    doi: 10.1007/s13244-011-0112-5
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3259375/
+    title: "Fatty liver deposition and sparing: a pictorial review."
+    journal: Insights Imaging
+    year: 2011
+    priority: core
+    categories: [pseudolesions, normal_variants, pitfalls, fatty_liver]
+    role: "Focal fat/fat sparing false-positive reduction."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_037
+    pmcid: PMC5117432
+    pmid: "27743568"
+    doi: 10.1053/j.ro.2016.05.016
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC5117432/
+    title: "Magnetic Resonanance Imaging of the Liver (Including Biliary Contrast Agents)-Part 2: Protocols for Liver Magnetic Resonanance Imaging and Characterization of Common Focal Liver Lesions."
+    journal: Semin Roentgenol
+    year: 2016
+    priority: core
+    categories: [liver_mri_protocol, biliary_contrast_agents, common_focal_liver_lesions]
+    role: "Protocol-focused MRI source and common lesion characterization."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_038
+    pmcid: null
+    pmid: null
+    doi: 10.13104/imri.2019.23.1.1
+    url: https://i-mri.org/DOIx.php?id=10.13104%2Fimri.2019.23.1.1
+    title: "Advanced Methods in Dynamic Contrast Enhanced Arterial Phase Imaging of the Liver."
+    journal: Investig Magn Reson Imaging
+    year: 2019
+    priority: support
+    categories: [dynamic_enhancement, arterial_phase, liver_mri_protocol, motion_artifacts]
+    role: "Arterial phase timing/technique and dynamic contrast support."
+    license_status: approved_by_felipe_for_research_corpus_v1
+    license_note: "Source page reports Open Access under CC BY-NC 3.0."
+
+  - id: argos_rag_v1_039
+    pmcid: PMC4366028
+    pmid: "25798007"
+    doi: 10.1590/0100-3984.2013.1794
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC4366028/
+    title: "The role of gadoxetic acid as a paramagnetic contrast medium in the characterization and detection of focal liver lesions: a review."
+    journal: Radiol Bras
+    year: 2015
+    priority: support
+    categories: [gadoxetic_acid, hepatobiliary_phase, lesion_detection, differential_diagnosis]
+    role: "Additional gadoxetic acid support; partially redundant but useful."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_040
+    pmcid: PMC3479888
+    pmid: "22556405"
+    doi: 10.1259/bjr/25139667
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3479888/
+    title: "Diagnostic efficacy of gadoxetic acid-enhanced MRI for the detection and characterisation of liver metastases: comparison with multidetector-row CT."
+    journal: Br J Radiol
+    year: 2012
+    priority: core
+    categories: [metastases, gadoxetic_acid, lesion_detection, hepatobiliary_phase]
+    role: "Metastases-specific gadoxetic MRI support."
+    license_status: approved_by_felipe_for_research_corpus_v1
+
+  - id: argos_rag_v1_041
+    pmcid: PMC9300573
+    pmid: "35648207"
+    doi: 10.1007/s00261-022-03555-9
+    url: https://pmc.ncbi.nlm.nih.gov/articles/PMC9300573/
+    title: "Magnetic resonance imaging of inflammatory pseudotumor of the liver: a 2021 systematic literature update and series presentation."
+    journal: Abdom Radiol (NY)
+    year: 2022
+    priority: core
+    categories: [inflammatory_mimickers, mimickers, differential_diagnosis]
+    role: "Inflammatory pseudotumor/mimicker coverage."
+    license_status: approved_by_felipe_for_research_corpus_v1
