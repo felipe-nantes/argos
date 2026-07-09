@@ -52,7 +52,7 @@ digital-twin = "digital_twin:main"
 
 [tool.setuptools]
 py-modules = ["digital_twin"]
-packages = ["dtwin", "dtwin.benchmark", "dtwin.datasets", "dtwin.rag"]
+packages = ["dtwin", "dtwin.benchmark", "dtwin.datasets", "dtwin.graphrag", "dtwin.rag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
