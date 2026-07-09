@@ -155,6 +155,12 @@ def _aggregate_panel_reports(entries: list[dict[str, Any]]) -> dict[str, Any]:
     limitations: list[str] = []
     locations: list[str] = []
     summaries: list[str] = []
+    v2_present = False
+    has_suspicious_lesion = False
+    has_benign_variant = False
+    has_pseudolesion_or_artifact = False
+    non_target_types: list[str] = []
+    separation_notes: list[str] = []
     for entry in entries:
         prefix = f"Painel {entry['panel_number']}/{entry['panel_total']}"
         report = entry["report"]
@@ -162,7 +168,30 @@ def _aggregate_panel_reports(entries: list[dict[str, Any]]) -> dict[str, Any]:
         locations.append(f"{prefix}: {report['localizacao_aproximada']}")
         signals.extend(f"{prefix}: {item}" for item in report["sinais_visuais_observados"])
         limitations.extend(f"{prefix}: {item}" for item in report["limitacoes_da_analise"])
-    return {
+        if any(
+            key in report
+            for key in (
+                "alvo_da_triagem",
+                "ha_lesao_focal_suspeita",
+                "ha_variante_anatomica_benigna",
+                "ha_pseudolesao_ou_artefato",
+                "tipo_alteracao_nao_alvo",
+                "justificativa_da_separacao",
+            )
+        ):
+            v2_present = True
+        has_suspicious_lesion = has_suspicious_lesion or report.get("ha_lesao_focal_suspeita") is True
+        has_benign_variant = has_benign_variant or report.get("ha_variante_anatomica_benigna") is True
+        has_pseudolesion_or_artifact = (
+            has_pseudolesion_or_artifact or report.get("ha_pseudolesao_ou_artefato") is True
+        )
+        non_target_type = report.get("tipo_alteracao_nao_alvo")
+        if isinstance(non_target_type, str) and non_target_type and non_target_type != "none":
+            non_target_types.append(non_target_type)
+        justification = report.get("justificativa_da_separacao")
+        if isinstance(justification, str) and justification.strip():
+            separation_notes.append(f"{prefix}: {justification.strip()}")
+    aggregated = {
         "resultado_hipotese": state,
         "resumo_do_achado": " | ".join(summaries),
         "localizacao_aproximada": " | ".join(locations),
@@ -171,6 +200,29 @@ def _aggregate_panel_reports(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "limitacoes_da_analise": limitations,
         "necessidade_de_revisao_humana": True,
     }
+    if v2_present:
+        unique_non_target_types = sorted(set(non_target_types))
+        aggregated.update(
+            {
+                "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+                "ha_lesao_focal_suspeita": has_suspicious_lesion,
+                "ha_variante_anatomica_benigna": has_benign_variant,
+                "ha_pseudolesao_ou_artefato": has_pseudolesion_or_artifact,
+                "tipo_alteracao_nao_alvo": (
+                    "none"
+                    if not unique_non_target_types
+                    else unique_non_target_types[0]
+                    if len(unique_non_target_types) == 1
+                    else "other"
+                ),
+                "justificativa_da_separacao": (
+                    " | ".join(separation_notes)
+                    if separation_notes
+                    else "Agregação determinística dos painéis sem síntese clínica adicional."
+                ),
+            }
+        )
+    return aggregated
 
 
 def _read_json(path: Path, label: str) -> dict[str, Any]:

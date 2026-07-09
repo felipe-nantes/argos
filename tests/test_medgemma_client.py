@@ -100,6 +100,35 @@ def test_volumetric_rag_config_preserves_volumetric_strategy():
     assert config["panel"]["strategy"] == "volumetric_blocks"
 
 
+def test_pathology_target_configs_preserve_volumetric_strategy_and_target_prompt():
+    for path, scale in (
+        ("configs/medgemma_local_4b_volumetric_pathology_target.yaml", "4B"),
+        ("configs/medgemma_ollama_27b_volumetric_pathology_target.yaml", "27B"),
+    ):
+        config = load_screening_config(path)
+        prompt = build_medgemma_prompt(config)
+
+        assert config["panel"]["strategy"] == "volumetric_blocks"
+        assert config["medgemma"]["model_parameter_scale"] == scale
+        for fragment in (
+            "Alvo da triagem: lesão focal hepática",
+            "não é diagnóstico",
+            "não é laudo médico",
+            "Revisão humana obrigatória",
+            "não é marcar qualquer alteração visual como positiva",
+            "Veia calibrosa isolada",
+            "estrutura tubular contínua",
+            "pseudolesão",
+            "variante anatômica benigna",
+            "NEGATIVA: não há evidência visual suficiente de lesão focal hepática/patologia alvo",
+            "ha_lesao_focal_suspeita",
+            "ha_variante_anatomica_benigna",
+            "tipo_alteracao_nao_alvo",
+            "INCONCLUSIVA",
+        ):
+            assert fragment.lower() in prompt.lower()
+
+
 def test_rag_config_rejects_absolute_or_parent_paths(tmp_path):
     config = load_screening_config("configs/medgemma_4b.yaml")
     config["rag"] = {
@@ -156,6 +185,58 @@ def test_parser_coerces_string_list_field_and_drops_extras():
     assert out["limitacoes_da_analise"] == ["Montagem 2D limita a avaliação."]
     assert out["necessidade_de_revisao_humana"] is True
     assert "comentario_extra" not in out
+
+
+def test_report_v2_accepts_negative_benign_variant_and_preserves_fields():
+    config = load_screening_config("configs/medgemma_4b.yaml")
+    report = valid_report("NEGATIVA")
+    report.update({
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": "false",
+        "ha_variante_anatomica_benigna": "true",
+        "ha_pseudolesao_ou_artefato": False,
+        "tipo_alteracao_nao_alvo": "vascular_variant",
+        "justificativa_da_separacao": "Estrutura tubular contínua compatível com vaso.",
+        "campo_desconhecido": "descartar",
+    })
+
+    out = validate_medgemma_report(report, config["report"])
+
+    assert out["resultado_hipotese"] == "NEGATIVA"
+    assert out["ha_lesao_focal_suspeita"] is False
+    assert out["ha_variante_anatomica_benigna"] is True
+    assert out["tipo_alteracao_nao_alvo"] == "vascular_variant"
+    assert "campo_desconhecido" not in out
+
+
+def test_report_v2_rejects_positive_without_suspicious_lesion_flag():
+    config = load_screening_config("configs/medgemma_4b.yaml")
+    report = valid_report("POSITIVA")
+    report.update({
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": False,
+        "ha_variante_anatomica_benigna": True,
+        "ha_pseudolesao_ou_artefato": False,
+        "tipo_alteracao_nao_alvo": "vascular_variant",
+        "justificativa_da_separacao": "Veia calibrosa isolada.",
+    })
+
+    with pytest.raises(PipelineError, match="ha_lesao_focal_suspeita=true"):
+        validate_medgemma_report(report, config["report"])
+
+
+def test_report_v2_rejects_invalid_non_target_type():
+    config = load_screening_config("configs/medgemma_4b.yaml")
+    report = valid_report("NEGATIVA")
+    report.update({
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": False,
+        "tipo_alteracao_nao_alvo": "unknown_type",
+        "justificativa_da_separacao": "Sem lesão focal suspeita.",
+    })
+
+    with pytest.raises(PipelineError, match="tipo_alteracao_nao_alvo"):
+        validate_medgemma_report(report, config["report"])
 
 
 def test_parser_still_blocks_diagnosis_after_normalization():
@@ -307,6 +388,60 @@ def test_http_adapter_retries_invalid_schema_with_strict_prompt(tmp_path, monkey
     assert [a["status"] for a in client.last_response_audit["attempts"]] == ["invalid", "accepted"]
     assert client.last_timings["response_validation_attempts"] == 2
     assert client.last_timings["response_repair_used"] is True
+
+
+def test_http_adapter_retries_v2_inconsistent_report(tmp_path, monkeypatch):
+    config = load_screening_config(
+        "configs/medgemma_4b.yaml",
+        environ={
+            "MEDGEMMA_BACKEND_CONFIGURED": "true",
+            "MEDGEMMA_MODEL_AVAILABLE": "true",
+        },
+    )
+    panel = tmp_path / "panel.png"
+    panel.write_bytes(b"test-png-bytes")
+    prompts = []
+    monkeypatch.setattr(
+        "dtwin.medgemma_client.socket.create_connection",
+        lambda *_args, **_kwargs: _Context(),
+    )
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        prompts.append(payload["prompt"])
+        if len(prompts) == 1:
+            report = valid_report("POSITIVA")
+            report.update({
+                "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+                "ha_lesao_focal_suspeita": False,
+                "ha_variante_anatomica_benigna": True,
+                "tipo_alteracao_nao_alvo": "vascular_variant",
+                "justificativa_da_separacao": "Contradição proposital.",
+            })
+        else:
+            report = valid_report("POSITIVA")
+            report.update({
+                "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+                "ha_lesao_focal_suspeita": True,
+                "ha_variante_anatomica_benigna": False,
+                "ha_pseudolesao_ou_artefato": False,
+                "tipo_alteracao_nao_alvo": "none",
+                "justificativa_da_separacao": "Achado focal não explicado por vaso.",
+            })
+        body = json.dumps({
+            "model_id": config["medgemma"]["model_id"],
+            "model_version": config["medgemma"]["model_version"],
+            "report": report,
+        }).encode("utf-8")
+        return _Context(body)
+
+    monkeypatch.setattr("dtwin.medgemma_client.urlopen", fake_urlopen)
+    report = HTTPJSONMedGemmaClient(config).generate(panel, "research prompt")
+
+    assert report["resultado_hipotese"] == "POSITIVA"
+    assert report["ha_lesao_focal_suspeita"] is True
+    assert len(prompts) == 2
+    assert "ha_lesao_focal_suspeita=true" in prompts[1]
 
 
 def test_http_adapter_fails_after_schema_retry_is_exhausted(tmp_path, monkeypatch):

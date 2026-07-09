@@ -31,6 +31,24 @@ REQUIRED_REPORT_FIELDS = {
     "limitacoes_da_analise",
     "necessidade_de_revisao_humana",
 }
+OPTIONAL_REPORT_V2_FIELDS = {
+    "alvo_da_triagem",
+    "ha_lesao_focal_suspeita",
+    "ha_variante_anatomica_benigna",
+    "ha_pseudolesao_ou_artefato",
+    "tipo_alteracao_nao_alvo",
+    "justificativa_da_separacao",
+}
+REPORT_V2_TARGET = "lesao_focal_hepatica_suspeita"
+NON_TARGET_ALTERATION_TYPES = {
+    "none",
+    "vascular_variant",
+    "perfusion_pseudolesion",
+    "artifact",
+    "focal_fat",
+    "cystic_benign",
+    "other",
+}
 
 # Sinônimos aceitos para canonicalizar saída SEMANTICAMENTE válida ao vocabulário
 # exigido (idioma/caixa). Não recupera valores fora desta lista — isso não seria
@@ -322,6 +340,11 @@ Use exatamente estes valores permitidos:
 - resultado_hipotese: "POSITIVA", "NEGATIVA" ou "INCONCLUSIVA"
 - confianca: "baixa", "moderada" ou "alta"
 - necessidade_de_revisao_humana: true
+- Se usar campos v2 opcionais:
+  - alvo_da_triagem: "lesao_focal_hepatica_suspeita"
+  - resultado_hipotese=POSITIVA exige ha_lesao_focal_suspeita=true
+  - variante anatômica benigna ou pseudolesão isolada não pode tornar o caso POSITIVA
+  - tipo_alteracao_nao_alvo: "none", "vascular_variant", "perfusion_pseudolesion", "artifact", "focal_fat", "cystic_benign" ou "other"
 
 Mantenha modo de pesquisa, não é diagnóstico, não é laudo médico e revisão humana obrigatória.
 """
@@ -343,6 +366,8 @@ Retorne somente um objeto JSON válido, sem Markdown e sem texto adicional:
 - confianca deve ser uma única string escolhida entre baixa, moderada, alta.
 - limitacoes_da_analise deve ser lista de strings.
 - necessidade_de_revisao_humana deve ser true.
+- Se usar campos v2, POSITIVA exige ha_lesao_focal_suspeita=true.
+- Variante anatômica benigna/pseudolesão isolada não pode ser POSITIVA.
 """
     if len(compact) > max_chars:
         raise PipelineError(
@@ -432,7 +457,69 @@ def _canonicalize_report(report: dict[str, Any]) -> dict[str, Any]:
             report[key] = [v.strip()] if v.strip() else []
         elif isinstance(v, list):
             report[key] = [x if isinstance(x, str) else str(x) for x in v]
+    for key in (
+        "ha_lesao_focal_suspeita",
+        "ha_variante_anatomica_benigna",
+        "ha_pseudolesao_ou_artefato",
+    ):
+        value = report.get(key)
+        if isinstance(value, str):
+            try:
+                report[key] = _bool(value, key)
+            except PipelineError:
+                pass
+    for key in ("alvo_da_triagem", "tipo_alteracao_nao_alvo", "justificativa_da_separacao"):
+        if isinstance(report.get(key), (int, float, bool)):
+            report[key] = str(report[key])
+    if isinstance(report.get("tipo_alteracao_nao_alvo"), str):
+        report["tipo_alteracao_nao_alvo"] = report["tipo_alteracao_nao_alvo"].strip().lower()
+    if isinstance(report.get("alvo_da_triagem"), str):
+        report["alvo_da_triagem"] = report["alvo_da_triagem"].strip().lower()
     return report
+
+
+def _validate_optional_report_v2(report: dict[str, Any]) -> dict[str, Any]:
+    present = OPTIONAL_REPORT_V2_FIELDS.intersection(report)
+    if not present:
+        return {}
+    v2 = {key: report[key] for key in OPTIONAL_REPORT_V2_FIELDS if key in report}
+    if "alvo_da_triagem" in v2 and v2["alvo_da_triagem"] != REPORT_V2_TARGET:
+        raise PipelineError(
+            f"alvo_da_triagem inválido: {v2['alvo_da_triagem']!r}; esperado {REPORT_V2_TARGET!r}."
+        )
+    for key in (
+        "ha_lesao_focal_suspeita",
+        "ha_variante_anatomica_benigna",
+        "ha_pseudolesao_ou_artefato",
+    ):
+        if key in v2 and not isinstance(v2[key], bool):
+            raise PipelineError(f"Campo v2 {key} deve ser booleano.")
+    if "tipo_alteracao_nao_alvo" in v2:
+        value = v2["tipo_alteracao_nao_alvo"]
+        if value not in NON_TARGET_ALTERATION_TYPES:
+            raise PipelineError(f"tipo_alteracao_nao_alvo inválido: {value!r}")
+    if "justificativa_da_separacao" in v2:
+        value = v2["justificativa_da_separacao"]
+        if not isinstance(value, str) or not value.strip():
+            raise PipelineError("justificativa_da_separacao deve ser string não vazia.")
+
+    state = report["resultado_hipotese"]
+    lesion_flag = v2.get("ha_lesao_focal_suspeita")
+    benign_flag = v2.get("ha_variante_anatomica_benigna") is True
+    pseudo_flag = v2.get("ha_pseudolesao_ou_artefato") is True
+    if state == "POSITIVA" and lesion_flag is False:
+        raise PipelineError(
+            "Inconsistência v2: resultado_hipotese=POSITIVA exige ha_lesao_focal_suspeita=true."
+        )
+    if state == "POSITIVA" and lesion_flag is not True and (benign_flag or pseudo_flag):
+        raise PipelineError(
+            "Inconsistência v2: variante anatômica/pseudolesão isolada não pode tornar o caso POSITIVA."
+        )
+    if state == "POSITIVA" and lesion_flag is None and present:
+        raise PipelineError(
+            "Inconsistência v2: relatório POSITIVA com campos v2 deve declarar ha_lesao_focal_suspeita=true."
+        )
+    return v2
 
 
 def validate_medgemma_report(
@@ -444,7 +531,11 @@ def validate_medgemma_report(
         raise PipelineError(
             f"Campos obrigatórios do relatório MedGemma ausentes: {sorted(missing)}."
         )
-    report = {key: report[key] for key in REQUIRED_REPORT_FIELDS}  # descarta chaves extras
+    report = {
+        key: report[key]
+        for key in (*REQUIRED_REPORT_FIELDS, *OPTIONAL_REPORT_V2_FIELDS)
+        if key in report
+    }  # descarta chaves extras não autorizadas
     state = report["resultado_hipotese"]
     if state not in report_config["allowed_states"]:
         raise PipelineError(f"Estado MedGemma inválido: {state!r}")
@@ -459,6 +550,7 @@ def validate_medgemma_report(
     for key in ("sinais_visuais_observados", "limitacoes_da_analise"):
         if not isinstance(report[key], list) or not all(isinstance(x, str) for x in report[key]):
             raise PipelineError(f"Campo {key} deve ser uma lista de strings.")
+    report.update(_validate_optional_report_v2(report))
 
     text = _all_text(report).lower()
     forbidden = (

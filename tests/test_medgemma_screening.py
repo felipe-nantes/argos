@@ -285,6 +285,37 @@ def test_aggregation_negative_only_when_all_negative_preserves_per_panel():
     assert any("Painel 2/2" in s for s in agg["limitacoes_da_analise"])
 
 
+def test_aggregation_preserves_v2_pathology_target_flags():
+    first = _panel_entry(1, 2, "NEGATIVA", "alta")
+    first["report"].update({
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": False,
+        "ha_variante_anatomica_benigna": True,
+        "ha_pseudolesao_ou_artefato": False,
+        "tipo_alteracao_nao_alvo": "vascular_variant",
+        "justificativa_da_separacao": "Vaso tubular contínuo.",
+    })
+    second = _panel_entry(2, 2, "NEGATIVA", "baixa")
+    second["report"].update({
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": False,
+        "ha_variante_anatomica_benigna": False,
+        "ha_pseudolesao_ou_artefato": True,
+        "tipo_alteracao_nao_alvo": "artifact",
+        "justificativa_da_separacao": "Artefato provável.",
+    })
+
+    agg = _aggregate_panel_reports([first, second])
+
+    assert agg["resultado_hipotese"] == "NEGATIVA"
+    assert agg["alvo_da_triagem"] == "lesao_focal_hepatica_suspeita"
+    assert agg["ha_lesao_focal_suspeita"] is False
+    assert agg["ha_variante_anatomica_benigna"] is True
+    assert agg["ha_pseudolesao_ou_artefato"] is True
+    assert agg["tipo_alteracao_nao_alvo"] == "other"
+    assert "Painel 1/2" in agg["justificativa_da_separacao"]
+
+
 class _CountingVolumetricClient:
     """Cliente de teste: uma resposta por painel, contando as chamadas."""
 
