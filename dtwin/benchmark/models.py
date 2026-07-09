@@ -26,6 +26,40 @@ class BenchmarkStatus(str, Enum):
     INVALID_RESPONSE = "invalid_response"
 
 
+TARGET_CONDITIONS = {"focal_liver_lesion_suspicion"}
+NEGATIVE_SUBTYPES = {
+    "normal",
+    "benign_anatomic_variant",
+    "pseudolesion_or_artifact",
+    "benign_non_target_finding",
+    "poor_quality_non_diagnostic",
+}
+POSITIVE_SUBTYPES = {
+    "focal_lesion_suspicious",
+    "hcc_suspicious",
+    "metastasis_suspicious",
+    "hemangioma_or_benign_lesion_visible",
+    "cyst_or_benign_lesion_visible",
+    "abscess_or_inflammatory_suspicion",
+    "other_pathologic_suspicion",
+}
+PHENOTYPE_TAGS = {
+    "prominent_hepatic_vein",
+    "portal_vein_variant",
+    "vascular_structure",
+    "perfusion_alteration",
+    "motion_artifact",
+    "partial_volume_effect",
+    "focal_fat",
+    "simple_cyst",
+    "edge_of_liver_pseudolesion",
+    "arterial_hyperenhancement",
+    "washout_suspicion",
+    "diffusion_restriction",
+    "t2_hyperintense_focus",
+}
+
+
 @dataclass(frozen=True)
 class InferenceCase:
     """Entrada sanitizada. Deliberadamente não possui label nem lesão."""
@@ -55,6 +89,12 @@ class EvaluationCase:
     lesion_mask_path: Path | None = None
     annotation_manifest_path: Path | None = None
     protected_ground_truth_hashes: dict[str, str | None] = field(default_factory=dict)
+    target_condition: str | None = None
+    negative_subtype: str | None = None
+    positive_subtype: str | None = None
+    phenotype_tags: list[str] = field(default_factory=list)
+    label_basis: str | None = None
+    review_status: str | None = None
 
 
 @dataclass
@@ -73,6 +113,12 @@ class BenchmarkCaseResult:
     error_message: str | None = None
     report_path: str | None = None
     panel_path: str | None = None
+    target_condition: str | None = None
+    negative_subtype: str | None = None
+    positive_subtype: str | None = None
+    phenotype_tags: list[str] = field(default_factory=list)
+    label_basis: str | None = None
+    review_status: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -110,6 +156,12 @@ class BenchmarkCaseResult:
             "error": {"type": self.error_type, "message": self.error_message},
             "report_path": self.report_path,
             "panel_path": self.panel_path,
+            "target_condition": self.target_condition,
+            "negative_subtype": self.negative_subtype,
+            "positive_subtype": self.positive_subtype,
+            "phenotype_tags": list(self.phenotype_tags),
+            "label_basis": self.label_basis,
+            "review_status": self.review_status,
         }
         data.update(self.extra)
         return data
@@ -143,4 +195,10 @@ class BenchmarkCaseResult:
             error_message=(error.get("message") if isinstance(error, dict) else str(error or "")) or None,
             report_path=value.get("report_path"),
             panel_path=value.get("panel_path"),
+            target_condition=value.get("target_condition"),
+            negative_subtype=value.get("negative_subtype"),
+            positive_subtype=value.get("positive_subtype"),
+            phenotype_tags=list(value.get("phenotype_tags") or []),
+            label_basis=value.get("label_basis"),
+            review_status=value.get("review_status"),
         )

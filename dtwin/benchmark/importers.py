@@ -15,11 +15,29 @@ from dtwin.core import Case, PipelineError, load_profile, sha256_of
 from dtwin.engine import Engine
 
 from .hashing import input_hashes, sha256_paths
-from .models import EvaluationCase, GroundTruthLabel, InferenceCase
+from .models import (
+    NEGATIVE_SUBTYPES,
+    PHENOTYPE_TAGS,
+    POSITIVE_SUBTYPES,
+    TARGET_CONDITIONS,
+    EvaluationCase,
+    GroundTruthLabel,
+    InferenceCase,
+)
 
 
 SUPPORTED_FORMATS = {"DICOM", "NIFTI", "MIDS"}
-FORBIDDEN_INFERENCE_KEYS = {"label", "lesion_mask", "lesion_mask_path", "annotations"}
+PROTECTED_LABEL_KEYS = {
+    "target_condition",
+    "negative_subtype",
+    "positive_subtype",
+    "phenotype_tags",
+    "label_basis",
+    "review_status",
+}
+FORBIDDEN_INFERENCE_KEYS = {
+    "label", "lesion_mask", "lesion_mask_path", "annotations", *PROTECTED_LABEL_KEYS,
+}
 FORBIDDEN_MANIFEST_KEYS = {
     "accessionnumber",
     "annotationmanifest",
@@ -30,9 +48,13 @@ FORBIDDEN_MANIFEST_KEYS = {
     "label",
     "lesionmask",
     "lesionmaskpath",
+    "negativesubtype",
     "patientbirthdate",
     "patientid",
     "patientname",
+    "phenotypetags",
+    "positivesubtype",
+    "targetcondition",
 }
 FORBIDDEN_MANIFEST_PREFIXES = ("patient",)
 
@@ -54,6 +76,12 @@ class ProtectedGroundTruth:
     label: GroundTruthLabel
     lesion_mask_path: Path | None = None
     annotation_manifest_path: Path | None = None
+    target_condition: str | None = None
+    negative_subtype: str | None = None
+    positive_subtype: str | None = None
+    phenotype_tags: tuple[str, ...] = ()
+    label_basis: str | None = None
+    review_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +145,57 @@ def _forbidden_manifest_paths(value: Any, prefix: str = "$") -> list[str]:
     return found
 
 
+def _optional_token(item: dict[str, Any], key: str) -> str | None:
+    value = item.get(key)
+    if value in (None, ""):
+        return None
+    return str(value).strip().lower()
+
+
+def _validate_protected_label_metadata(
+    item: dict[str, Any],
+    label: GroundTruthLabel,
+    case_ref: str,
+) -> dict[str, Any]:
+    target_condition = _optional_token(item, "target_condition")
+    negative_subtype = _optional_token(item, "negative_subtype")
+    positive_subtype = _optional_token(item, "positive_subtype")
+    label_basis = _optional_token(item, "label_basis")
+    review_status = _optional_token(item, "review_status")
+    raw_tags = item.get("phenotype_tags") or []
+
+    if target_condition is not None and target_condition not in TARGET_CONDITIONS:
+        raise PipelineError(f"target_condition invalido em {case_ref}: {target_condition!r}")
+    if negative_subtype is not None and negative_subtype not in NEGATIVE_SUBTYPES:
+        raise PipelineError(f"negative_subtype invalido em {case_ref}: {negative_subtype!r}")
+    if positive_subtype is not None and positive_subtype not in POSITIVE_SUBTYPES:
+        raise PipelineError(f"positive_subtype invalido em {case_ref}: {positive_subtype!r}")
+    if negative_subtype and positive_subtype:
+        raise PipelineError(f"negative_subtype e positive_subtype sao mutuamente exclusivos em {case_ref}.")
+    if negative_subtype and label is not GroundTruthLabel.NEGATIVE:
+        raise PipelineError(f"negative_subtype so e permitido para label=NEGATIVE em {case_ref}.")
+    if positive_subtype and label is not GroundTruthLabel.POSITIVE:
+        raise PipelineError(f"positive_subtype so e permitido para label=POSITIVE em {case_ref}.")
+    if not isinstance(raw_tags, list):
+        raise PipelineError(f"phenotype_tags deve ser lista em {case_ref}.")
+
+    tags = tuple(str(value).strip().lower() for value in raw_tags if str(value).strip())
+    invalid_tags = [value for value in tags if value not in PHENOTYPE_TAGS]
+    if invalid_tags:
+        raise PipelineError(f"phenotype_tags invalidas em {case_ref}: {invalid_tags}")
+    if (negative_subtype or positive_subtype or tags) and target_condition is None:
+        target_condition = "focal_liver_lesion_suspicion"
+
+    return {
+        "target_condition": target_condition,
+        "negative_subtype": negative_subtype,
+        "positive_subtype": positive_subtype,
+        "phenotype_tags": tags,
+        "label_basis": label_basis,
+        "review_status": review_status,
+    }
+
+
 def load_dataset_manifest(path: Path) -> list[DatasetCase]:
     """Carrega datasets e labels separados sem fazer qualquer inferência."""
     path = Path(path).resolve()
@@ -158,6 +237,7 @@ def load_dataset_manifest(path: Path) -> list[DatasetCase]:
                 label = GroundTruthLabel(str(item.get("label") or "").lower())
             except ValueError as exc:
                 raise PipelineError(f"Label inválido em {name}/{case_id}") from exc
+            label_metadata = _validate_protected_label_metadata(item, label, f"{name}/{case_id}")
             inference = item.get("inference") or item.get("volume") or {}
             ground_truth = item.get("ground_truth") or item.get("lesion_annotations") or {}
             if not isinstance(inference, dict) or not isinstance(ground_truth, dict):
@@ -179,6 +259,7 @@ def load_dataset_manifest(path: Path) -> list[DatasetCase]:
                 label=label,
                 lesion_mask_path=_inside(root, ground_truth.get("lesion_mask") or ground_truth.get("lesion_mask_path")),
                 annotation_manifest_path=_inside(root, ground_truth.get("annotation_manifest")),
+                **label_metadata,
             )
             loaded.append(DatasetCase(source, protected))
     return loaded
@@ -376,4 +457,10 @@ def attach_ground_truth(case: DatasetCase, inference: InferenceCase) -> Evaluati
         lesion_mask_path=case.ground_truth.lesion_mask_path,
         annotation_manifest_path=case.ground_truth.annotation_manifest_path,
         protected_ground_truth_hashes=hashes,
+        target_condition=case.ground_truth.target_condition,
+        negative_subtype=case.ground_truth.negative_subtype,
+        positive_subtype=case.ground_truth.positive_subtype,
+        phenotype_tags=list(case.ground_truth.phenotype_tags),
+        label_basis=case.ground_truth.label_basis,
+        review_status=case.ground_truth.review_status,
     )

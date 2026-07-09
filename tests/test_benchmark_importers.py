@@ -22,15 +22,26 @@ def _image(path: Path, value=1, spacing=(1.0, 1.0, 2.0)):
     sitk.WriteImage(image, str(path))
 
 
-def _manifests(tmp_path, fmt="NIFTI", inference=None, ground_truth=None, case_id="case-001"):
+def _manifests(
+    tmp_path,
+    fmt="NIFTI",
+    inference=None,
+    ground_truth=None,
+    case_id="case-001",
+    label="POSITIVE",
+    label_fields=None,
+):
     root = tmp_path / "dataset"
     root.mkdir()
-    labels = tmp_path / "labels.yaml"
-    labels.write_text(yaml.safe_dump({"cases": [{
-        "case_id": case_id, "label": "POSITIVE",
+    row = {
+        "case_id": case_id,
+        "label": label,
         "inference": inference or {"volume": "volume.nii.gz", "organ_mask": "mask.nii.gz"},
         "ground_truth": ground_truth or {},
-    }]}), encoding="utf-8")
+    }
+    row.update(label_fields or {})
+    labels = tmp_path / "labels.yaml"
+    labels.write_text(yaml.safe_dump({"cases": [row]}), encoding="utf-8")
     manifest = tmp_path / "datasets.yaml"
     manifest.write_text(yaml.safe_dump({"datasets": [{
         "name": "TEST", "format": fmt, "root": "dataset", "labels_manifest": "labels.yaml",
@@ -51,6 +62,61 @@ def test_nifti_importer_physically_excludes_ground_truth(tmp_path):
     evaluation = attach_ground_truth(case, inference)
     assert evaluation.label.value == "positive"
     assert len(evaluation.protected_ground_truth_hashes["lesion_mask"]) == 64
+
+
+def test_protected_taxonomy_is_attached_only_after_inference(tmp_path):
+    root, manifest = _manifests(
+        tmp_path,
+        label="NEGATIVE",
+        label_fields={
+            "negative_subtype": "benign_anatomic_variant",
+            "phenotype_tags": ["prominent_hepatic_vein", "vascular_structure"],
+            "label_basis": "human_review",
+            "review_status": "reviewed",
+        },
+    )
+    _image(root / "volume.nii.gz", 2)
+    _image(root / "mask.nii.gz", 1)
+
+    case = load_dataset_manifest(manifest)[0]
+    assert case.ground_truth.target_condition == "focal_liver_lesion_suspicion"
+    assert case.ground_truth.negative_subtype == "benign_anatomic_variant"
+    assert case.ground_truth.phenotype_tags == ("prominent_hepatic_vein", "vascular_structure")
+
+    inference = prepare_inference_case(case.inference, tmp_path / "run" / "inference")
+    manifest_text = inference.manifest_path.read_text(encoding="utf-8")
+    assert "negative_subtype" not in manifest_text
+    assert "prominent_hepatic_vein" not in manifest_text
+
+    evaluation = attach_ground_truth(case, inference)
+    assert evaluation.negative_subtype == "benign_anatomic_variant"
+    assert evaluation.phenotype_tags == ["prominent_hepatic_vein", "vascular_structure"]
+
+
+def test_protected_taxonomy_rejects_negative_subtype_on_positive_case(tmp_path):
+    root, manifest = _manifests(
+        tmp_path,
+        label="POSITIVE",
+        label_fields={"negative_subtype": "benign_anatomic_variant"},
+    )
+    _image(root / "volume.nii.gz")
+    _image(root / "mask.nii.gz", spacing=(1.5, 1.0, 1.0))
+
+    with pytest.raises(PipelineError, match="negative_subtype"):
+        load_dataset_manifest(manifest)
+
+
+def test_protected_taxonomy_rejects_invalid_phenotype_tag(tmp_path):
+    root, manifest = _manifests(
+        tmp_path,
+        label="NEGATIVE",
+        label_fields={"phenotype_tags": ["made_up_tag"]},
+    )
+    _image(root / "volume.nii.gz")
+    _image(root / "mask.nii.gz", spacing=(1.5, 1.0, 1.0))
+
+    with pytest.raises(PipelineError, match="phenotype_tags"):
+        load_dataset_manifest(manifest)
 
 
 def test_nifti_importer_preserves_adjacent_anonymized_manifest(tmp_path):
@@ -161,6 +227,18 @@ def test_manifest_rejects_ground_truth_inside_inference(tmp_path):
     _image(root / "volume.nii.gz")
     _image(root / "mask.nii.gz", spacing=(1.5, 1.0, 1.0))
     _image(root / "lesion.nii.gz")
+    with pytest.raises(PipelineError, match="vazou"):
+        load_dataset_manifest(manifest)
+
+
+def test_manifest_rejects_protected_taxonomy_inside_inference(tmp_path):
+    root, manifest = _manifests(tmp_path, inference={
+        "volume": "volume.nii.gz",
+        "organ_mask": "mask.nii.gz",
+        "negative_subtype": "benign_anatomic_variant",
+    })
+    _image(root / "volume.nii.gz")
+    _image(root / "mask.nii.gz", spacing=(1.5, 1.0, 1.0))
     with pytest.raises(PipelineError, match="vazou"):
         load_dataset_manifest(manifest)
 

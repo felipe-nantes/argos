@@ -27,10 +27,33 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
+def _subtype_table(title: str, rows: dict[str, dict[str, Any]], metric_key: str) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        title,
+        "",
+        "| Subgrupo | Casos | Métrica | Positivos preditos | Inconclusivos | Falhas |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for name, data in rows.items():
+        failures = (
+            int(data.get("failure") or 0)
+            + int(data.get("timeout") or 0)
+            + int(data.get("invalid_response") or 0)
+        )
+        lines.append(
+            f"| {name} | {data.get('total')} | {_fmt(data.get(metric_key))} | "
+            f"{data.get('positive_predictions')} | {data.get('inconclusive')} | {failures} |"
+        )
+    return lines + [""]
+
+
 def build_summary(run_manifest: dict[str, Any], metrics: dict[str, Any]) -> str:
     primary = metrics["primary"]
     secondary = metrics["decisions_only"]
     gate = metrics["gate"]
+    stratified = primary.get("stratified") or {}
     rows = [
         ("Sensibilidade", primary.get("sensitivity")),
         ("Especificidade", primary.get("specificity")),
@@ -60,6 +83,21 @@ def build_summary(run_manifest: dict[str, Any], metrics: dict[str, Any]) -> str:
         "|---|---:|",
         *[f"| {name} | {_fmt(value)} |" for name, value in rows],
         "",
+        "## Métricas estratificadas — taxonomia protegida",
+        "",
+        "- negativo = normal + variante anatômica benigna + pseudolesão/artefato",
+        "- os subtipos e tags são anexados somente após a inferência",
+        "",
+        *_subtype_table(
+            "### Negativos por subtipo",
+            stratified.get("negative_subtypes") or {},
+            "specificity",
+        ),
+        *_subtype_table(
+            "### Positivos por subtipo",
+            stratified.get("positive_subtypes") or {},
+            "sensitivity",
+        ),
         "## Métricas secundárias — decisions-only",
         "",
         f"> {secondary['warning']}",

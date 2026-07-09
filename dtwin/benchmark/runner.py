@@ -174,6 +174,17 @@ def classify_screening_failure(message: str) -> BenchmarkStatus:
     )
 
 
+def _protected_label_metadata(ground_truth) -> dict[str, object]:
+    return {
+        "target_condition": ground_truth.target_condition,
+        "negative_subtype": ground_truth.negative_subtype,
+        "positive_subtype": ground_truth.positive_subtype,
+        "phenotype_tags": list(ground_truth.phenotype_tags),
+        "label_basis": ground_truth.label_basis,
+        "review_status": ground_truth.review_status,
+    }
+
+
 def run_case(
     case: DatasetCase,
     *,
@@ -196,6 +207,7 @@ def run_case(
             input_format=case.inference.input_format, truth=case.ground_truth.label,
             status=BenchmarkStatus.FAILURE, error_type=type(exc).__name__,
             error_message=str(exc), durations_seconds={"import": round(time.monotonic() - import_started, 4), "total": round(time.monotonic() - case_started, 4)},
+            **_protected_label_metadata(case.ground_truth),
         )
     import_duration = time.monotonic() - import_started
     output = inference.workspace / "outputs" / "medgemma"
@@ -261,6 +273,12 @@ def run_case(
         case_id=inference.case_id, dataset=inference.dataset, input_format=inference.input_format,
         truth=evaluation.label, status=status, prediction=prediction, confidence=confidence,
         input_hashes=hashes, protected_ground_truth_hashes=evaluation.protected_ground_truth_hashes,
+        target_condition=evaluation.target_condition,
+        negative_subtype=evaluation.negative_subtype,
+        positive_subtype=evaluation.positive_subtype,
+        phenotype_tags=evaluation.phenotype_tags,
+        label_basis=evaluation.label_basis,
+        review_status=evaluation.review_status,
         durations_seconds={
             "import": round(import_duration, 4),
             "panel_generation": screening_timings.get("panel_generation"),
@@ -409,6 +427,24 @@ def recalculate_existing_run(
             raise PipelineError(f"Label divergente ao reutilizar {key[0]}/{key[1]}")
         result = BenchmarkCaseResult.from_mapping(prior)
         evaluation = attach_ground_truth(case, inference)
+        expected_metadata = {
+            "target_condition": evaluation.target_condition,
+            "negative_subtype": evaluation.negative_subtype,
+            "positive_subtype": evaluation.positive_subtype,
+            "phenotype_tags": list(evaluation.phenotype_tags),
+            "label_basis": evaluation.label_basis,
+            "review_status": evaluation.review_status,
+        }
+        prior_metadata = {
+            "target_condition": result.target_condition,
+            "negative_subtype": result.negative_subtype,
+            "positive_subtype": result.positive_subtype,
+            "phenotype_tags": list(result.phenotype_tags),
+            "label_basis": result.label_basis,
+            "review_status": result.review_status,
+        }
+        if prior_metadata != expected_metadata:
+            raise PipelineError(f"Taxonomia protegida divergente ao reutilizar {key[0]}/{key[1]}")
         result.input_hashes = prior_hashes
         result.protected_ground_truth_hashes = evaluation.protected_ground_truth_hashes
         result.extra.update(source_run_id=source_manifest.get("run_id"), inference_reused=True)

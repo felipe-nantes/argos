@@ -1,8 +1,14 @@
 from dtwin.benchmark.metrics import compute_benchmark_metrics, wilson_interval
 
 
-def _case(truth, prediction=None, status="failure"):
-    return {"case_id": f"{truth}-{status}", "truth": truth, "prediction": prediction, "status": status}
+def _case(truth, prediction=None, status="failure", **extra):
+    return {
+        "case_id": f"{truth}-{status}",
+        "truth": truth,
+        "prediction": prediction,
+        "status": status,
+        **extra,
+    }
 
 
 def test_primary_penalizes_every_non_correct_outcome():
@@ -78,3 +84,34 @@ def test_wilson_and_undefined_metrics_are_explicit():
     assert metrics["undefined_reasons"]["sensitivity"] == "no_positive_cases"
     assert metrics["confidence_intervals_95"]["f1"] is None
     assert metrics["f1_ci_method"] == "not_implemented"
+
+
+def test_stratified_metrics_separate_benign_variants_and_positive_subtypes():
+    metrics = compute_benchmark_metrics([
+        _case("negative", "NEGATIVA", "decisive", negative_subtype="normal"),
+        _case(
+            "negative",
+            "POSITIVA",
+            "decisive",
+            negative_subtype="benign_anatomic_variant",
+            phenotype_tags=["prominent_hepatic_vein"],
+        ),
+        _case("negative", "INCONCLUSIVA", "inconclusive", negative_subtype="benign_anatomic_variant"),
+        _case("positive", "POSITIVA", "decisive", positive_subtype="hcc_suspicious"),
+        _case("positive", "NEGATIVA", "decisive", positive_subtype="hcc_suspicious"),
+    ])
+
+    stratified = metrics["primary"]["stratified"]
+    benign = stratified["negative_subtypes"]["benign_anatomic_variant"]
+    normal = stratified["negative_subtypes"]["normal"]
+    hcc = stratified["positive_subtypes"]["hcc_suspicious"]
+    vein = stratified["phenotype_tags"]["prominent_hepatic_vein"]
+
+    assert normal["specificity"] == 1.0
+    assert benign["total"] == 2
+    assert benign["specificity"] == 0.0
+    assert benign["false_positive_rate"] == 0.5
+    assert stratified["positive_rate_on_benign_variants"] == 0.5
+    assert hcc["sensitivity"] == 0.5
+    assert vein["specificity_on_tagged_negatives"] == 0.0
+    assert metrics["stratified_metrics"] == stratified

@@ -53,6 +53,93 @@ def _undefined_reasons(*, positives: int, negatives: int, predicted_positive: in
     return reasons
 
 
+def _terminal_counts(group: list[BenchmarkCaseResult]) -> dict[str, int]:
+    return {
+        "positive_predictions": sum(c.prediction is ModelResult.POSITIVE for c in group),
+        "negative_predictions": sum(c.prediction is ModelResult.NEGATIVE for c in group),
+        "inconclusive": sum(c.status is BenchmarkStatus.INCONCLUSIVE for c in group),
+        "failure": sum(c.status is BenchmarkStatus.FAILURE for c in group),
+        "timeout": sum(c.status is BenchmarkStatus.TIMEOUT for c in group),
+        "invalid_response": sum(c.status is BenchmarkStatus.INVALID_RESPONSE for c in group),
+    }
+
+
+def _negative_subtype_metrics(negatives: list[BenchmarkCaseResult]) -> dict[str, dict[str, Any]]:
+    values = sorted({case.negative_subtype or "unspecified" for case in negatives})
+    metrics: dict[str, dict[str, Any]] = {}
+    for value in values:
+        group = [case for case in negatives if (case.negative_subtype or "unspecified") == value]
+        counts = _terminal_counts(group)
+        true_negatives = counts["negative_predictions"]
+        false_positives_penalized = len(group) - true_negatives
+        metrics[value] = {
+            "total": len(group),
+            "true_negatives": true_negatives,
+            "false_positives_penalized": false_positives_penalized,
+            "specificity": _ratio(true_negatives, len(group)),
+            "false_positive_rate": _ratio(counts["positive_predictions"], len(group)),
+            "positive_prediction_rate": _ratio(counts["positive_predictions"], len(group)),
+            "inconclusive_rate": _ratio(counts["inconclusive"], len(group)),
+            "failure_rate": _ratio(
+                counts["failure"] + counts["timeout"] + counts["invalid_response"],
+                len(group),
+            ),
+            **counts,
+        }
+    return metrics
+
+
+def _positive_subtype_metrics(positives: list[BenchmarkCaseResult]) -> dict[str, dict[str, Any]]:
+    values = sorted({case.positive_subtype or "unspecified" for case in positives})
+    metrics: dict[str, dict[str, Any]] = {}
+    for value in values:
+        group = [case for case in positives if (case.positive_subtype or "unspecified") == value]
+        counts = _terminal_counts(group)
+        true_positives = counts["positive_predictions"]
+        false_negatives_penalized = len(group) - true_positives
+        metrics[value] = {
+            "total": len(group),
+            "true_positives": true_positives,
+            "false_negatives_penalized": false_negatives_penalized,
+            "sensitivity": _ratio(true_positives, len(group)),
+            "negative_prediction_rate": _ratio(counts["negative_predictions"], len(group)),
+            "inconclusive_rate": _ratio(counts["inconclusive"], len(group)),
+            "failure_rate": _ratio(
+                counts["failure"] + counts["timeout"] + counts["invalid_response"],
+                len(group),
+            ),
+            **counts,
+        }
+    return metrics
+
+
+def _phenotype_tag_metrics(cases: list[BenchmarkCaseResult]) -> dict[str, dict[str, Any]]:
+    values = sorted({tag for case in cases for tag in case.phenotype_tags})
+    metrics: dict[str, dict[str, Any]] = {}
+    for value in values:
+        group = [case for case in cases if value in case.phenotype_tags]
+        negatives = [case for case in group if case.truth is GroundTruthLabel.NEGATIVE]
+        positives = [case for case in group if case.truth is GroundTruthLabel.POSITIVE]
+        counts = _terminal_counts(group)
+        metrics[value] = {
+            "total": len(group),
+            "negative_cases": len(negatives),
+            "positive_cases": len(positives),
+            "specificity_on_tagged_negatives": _ratio(
+                sum(case.prediction is ModelResult.NEGATIVE for case in negatives),
+                len(negatives),
+            ),
+            "sensitivity_on_tagged_positives": _ratio(
+                sum(case.prediction is ModelResult.POSITIVE for case in positives),
+                len(positives),
+            ),
+            "positive_prediction_rate": _ratio(counts["positive_predictions"], len(group)),
+            "inconclusive_rate": _ratio(counts["inconclusive"], len(group)),
+            **counts,
+        }
+    return metrics
+
+
 def compute_benchmark_metrics(
     results: Iterable[BenchmarkCaseResult | dict[str, Any]],
     *,
@@ -113,6 +200,25 @@ def compute_benchmark_metrics(
         - auxiliary["timeout_count"]
         - auxiliary["invalid_response_count"]
     )
+    negative_subtypes = _negative_subtype_metrics(negatives)
+    positive_subtypes = _positive_subtype_metrics(positives)
+    phenotype_tags = _phenotype_tag_metrics(cases)
+    benign_variants = negative_subtypes.get("benign_anatomic_variant")
+    stratified = {
+        "negative_subtypes": negative_subtypes,
+        "positive_subtypes": positive_subtypes,
+        "phenotype_tags": phenotype_tags,
+        "specificity_normal": (negative_subtypes.get("normal") or {}).get("specificity"),
+        "specificity_benign_anatomic_variant": (benign_variants or {}).get("specificity"),
+        "specificity_pseudolesion_or_artifact": (
+            negative_subtypes.get("pseudolesion_or_artifact") or {}
+        ).get("specificity"),
+        "positive_rate_on_benign_variants": (
+            (benign_variants or {}).get("positive_prediction_rate")
+            if benign_variants
+            else None
+        ),
+    }
     primary = {
         "scope": "primary_all_cases",
         "scoring_policy": "non_correct_result_counts_as_group_error",
@@ -149,6 +255,7 @@ def compute_benchmark_metrics(
             positives=len(positives), negatives=len(negatives),
             predicted_positive=tp + penalized_fp, decisions=len(decisive),
         ),
+        "stratified": stratified,
     }
 
     decisions_only = {
@@ -178,4 +285,5 @@ def compute_benchmark_metrics(
 
     # Campos legados permanecem no topo para o webapp e consumidores atuais.
     return {**primary, "primary": primary, "decisions_only": decisions_only, "decisive_only": decisions_only, "gate": gate,
+            "stratified_metrics": stratified,
             "target": {"minimum_sensitivity": minimum_sensitivity, "minimum_specificity": minimum_specificity, "met": target_passed}}
