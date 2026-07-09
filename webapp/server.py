@@ -33,7 +33,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.request import urlopen
 
 import pydicom
@@ -50,7 +50,11 @@ from dtwin.benchmark.hashing import git_state
 from dtwin.benchmark.reporting import write_run_outputs
 from dtwin.benchmark.runner import classify_screening_failure
 from dtwin.core import PipelineError, sha256_of
-from dtwin.medgemma_client import effective_config_sha256, load_screening_config
+from dtwin.medgemma_client import (
+    OPTIONAL_REPORT_V2_FIELDS,
+    effective_config_sha256,
+    load_screening_config,
+)
 from dtwin.medgemma_volumetric import effective_screening_timeout
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -581,6 +585,11 @@ def _run_benchmark_case(
             confidence=report.get("confianca"),
             status="inconclusive" if prediction == "INCONCLUSIVA" else "decisive",
             report_summary=report.get("resumo_do_achado"),
+            # Campos v2 (schema pathology-target) só existem quando o modelo os
+            # emite; preservados aqui para estratificar o benchmark e o CSV.
+            report_v2={
+                key: report[key] for key in OPTIONAL_REPORT_V2_FIELDS if key in report
+            },
             report_path=str(
                 Path("cases") / f"{index:04d}" / "outputs" / "medgemma" / "medgemma_report.json"
             ),
@@ -778,18 +787,43 @@ def _parse_benchmark_manifest(raw: str, file_count: int) -> dict:
     }
 
 
+def _csv_cell(value: Any) -> Any:
+    """Serializa valores compostos/booleanos de forma estável para o CSV."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ";".join(str(v) for v in value)
+    return value
+
+
 def _benchmark_csv(report: dict) -> str:
     stream = io.StringIO()
     writer = csv.writer(stream)
     writer.writerow([
         "case_id", "truth", "prediction", "status", "correct", "confidence",
         "duration_seconds", "error",
+        # Taxonomia protegida (preenchida quando o manifesto a declara).
+        "target_condition", "negative_subtype", "positive_subtype", "phenotype_tags",
+        # Schema v2 do relatório MedGemma (cenário pathology-target).
+        "ha_lesao_focal_suspeita", "ha_variante_anatomica_benigna",
+        "ha_pseudolesao_ou_artefato", "tipo_alteracao_nao_alvo",
     ])
     for item in report.get("cases", []):
+        v2 = item.get("report_v2") or {}
         writer.writerow([
             item.get("case_id"), item.get("truth"), item.get("prediction"),
             item.get("status"), item.get("correct"), item.get("confidence"),
-            item.get("duration_seconds"), item.get("error"),
+            item.get("duration_seconds"), _csv_cell(item.get("error")),
+            _csv_cell(item.get("target_condition")),
+            _csv_cell(item.get("negative_subtype")),
+            _csv_cell(item.get("positive_subtype")),
+            _csv_cell(item.get("phenotype_tags")),
+            _csv_cell(v2.get("ha_lesao_focal_suspeita")),
+            _csv_cell(v2.get("ha_variante_anatomica_benigna")),
+            _csv_cell(v2.get("ha_pseudolesao_ou_artefato")),
+            _csv_cell(v2.get("tipo_alteracao_nao_alvo")),
         ])
     return stream.getvalue()
 

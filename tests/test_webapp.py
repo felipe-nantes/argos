@@ -369,6 +369,13 @@ def test_benchmark_report_downloads_json_and_csv(monkeypatch, tmp_path):
             "case_id": "caso-a", "truth": "positive", "prediction": "POSITIVA",
             "status": "decisive", "correct": True, "confidence": "alta",
             "duration_seconds": 12.5, "error": None,
+            "positive_subtype": "hcc_suspicious",
+            "phenotype_tags": ["arterial_hyperenhancement", "washout_suspicion"],
+            "report_v2": {
+                "ha_lesao_focal_suspeita": True,
+                "ha_variante_anatomica_benigna": False,
+                "tipo_alteracao_nao_alvo": "none",
+            },
         }],
     }
     (root / "benchmark_report.json").write_text(json.dumps(report), "utf-8")
@@ -376,8 +383,18 @@ def test_benchmark_report_downloads_json_and_csv(monkeypatch, tmp_path):
     assert client.get(f"/api/benchmarks/{benchmark_id}/report.json").status_code == 200
     csv_response = client.get(f"/api/benchmarks/{benchmark_id}/report.csv")
     assert csv_response.status_code == 200
-    assert "case_id,truth,prediction" in csv_response.text
-    assert "caso-a,positive,POSITIVA" in csv_response.text
+    header, first_row = csv_response.text.splitlines()[:2]
+    assert "case_id,truth,prediction" in header
+    # Colunas estratificadas (taxonomia + schema v2) presentes e preenchidas.
+    for column in (
+        "target_condition", "negative_subtype", "positive_subtype", "phenotype_tags",
+        "ha_lesao_focal_suspeita", "tipo_alteracao_nao_alvo",
+    ):
+        assert column in header
+    assert "caso-a,positive,POSITIVA" in first_row
+    assert "hcc_suspicious" in first_row
+    assert "arterial_hyperenhancement;washout_suspicion" in first_row
+    assert "true" in first_row  # ha_lesao_focal_suspeita booleano serializado
 
 
 def test_web_benchmark_persists_auditable_run_outputs(monkeypatch, tmp_path):
