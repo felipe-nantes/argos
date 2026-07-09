@@ -64,6 +64,32 @@ Cada linha do JSONL segue `argos-dataset-registry-v1` e contém:
 - `annotation_path`, quando uma máscara/anotação for encontrada;
 - `research_only=true` e `clinical_use_allowed=false`.
 
+## Documentos RAG derivados
+
+A partir dos manifestos do registry é possível gerar documentos textuais
+seguros (`argos-rag-dataset-document-v1`) para apoiar prompt, revisão e
+auditoria — sem imagens e sem metadado bruto sensível:
+
+```bash
+python -m dtwin.rag.dataset_index \
+  --manifests data/registry/chaos_mri.jsonl data/registry/lld_mmri.jsonl \
+              data/registry/liverhccseg.jsonl data/registry/tcga_lihc_mr.jsonl \
+  --out data/rag/dataset_documents.jsonl
+```
+
+Cada documento contém `doc_id`, `case_id`, `dataset_id`, `rag_class`,
+`title`, `text` e `metadata` (subconjunto seguro de rótulos). O texto segue
+as regras metodológicas por classe:
+
+- CHAOS é descrito como controle anatômico negativo, nunca como normalidade
+  clínica absoluta;
+- variante anatômica benigna é marcada como negativa que pode mimetizar lesão
+  focal, mas não deve ser contada como positivo patológico;
+- LLD-MMRI é positivo em NIfTI e nunca DICOM original;
+- LiverHccSeg/TCGA-LIHC são exemplos positivos de HCC em RM.
+
+UIDs DICOM e identificadores de paciente são recusados na geração.
+
 ## Segurança metodológica
 
 - O registry não deve ser colocado diretamente na inferência do MedGemma.
