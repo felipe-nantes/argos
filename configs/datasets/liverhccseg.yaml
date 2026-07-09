@@ -1,0 +1,28 @@
+schema: argos-dataset-config-v1
+dataset_id: liverhccseg
+dataset_name: LiverHccSeg
+rag_class: positive
+label: hcc_em_rm_dicom
+positive_subtype: hcc_suspicious
+phenotype_tags:
+  - arterial_hyperenhancement
+  - washout_suspicion
+modality: MR
+source_format: dicom
+sequence_or_phase: unknown
+body_region: abdomen_liver
+source_url: https://www.cancerimagingarchive.net/
+clinical_use_allowed: false
+research_only: true
+has_segmentation_default: false
+annotation_globs:
+  - "**/*mask*.nii*"
+  - "**/*seg*.nii*"
+  - "**/*label*.nii*"
+limitations:
+  - "Caso positivo HCC em DICOM quando disponível."
+  - "Anotação NIfTI é opcional e nunca deve entrar na inferência."
+warnings:
+  - "Usar anotações somente após a inferência."
+metadata:
+  intended_use: hcc_positive_dicom

@@ -1,0 +1,30 @@
+schema: argos-dataset-config-v1
+dataset_id: lld_mmri
+dataset_name: LLD-MMRI
+rag_class: positive
+label: lesao_hepatica_focal_documentada
+positive_subtype: focal_lesion_suspicious
+phenotype_tags: []
+modality: MR
+source_format: nifti
+sequence_or_phase: unknown
+body_region: abdomen_liver
+source_url: https://github.com/MrGiovanni/LLD-MMRI
+clinical_use_allowed: false
+research_only: true
+has_segmentation_default: true
+annotation_globs:
+  - "**/*mask*.nii*"
+  - "**/*seg*.nii*"
+  - "**/*label*.nii*"
+exclude_globs:
+  - "**/*mask*.nii*"
+  - "**/*seg*.nii*"
+  - "**/*label*.nii*"
+limitations:
+  - "Caso positivo amplo de lesão hepática focal em NIfTI."
+  - "Não é DICOM original."
+warnings:
+  - "LLD-MMRI nunca deve ser marcado como dicom_original=true."
+metadata:
+  intended_use: broad_positive_nifti

@@ -1,0 +1,25 @@
+schema: argos-dataset-config-v1
+dataset_id: chaos_mri
+dataset_name: CHAOS MRI
+rag_class: negative
+label: controle_anatomico_sem_patologia_macroscopica_documentada
+negative_subtype: normal
+phenotype_tags: []
+modality: MR
+source_format: dicom
+sequence_or_phase: unknown
+body_region: abdomen_liver
+source_url: https://chaos.grand-challenge.org/Data/
+clinical_use_allowed: false
+research_only: true
+has_segmentation_default: true
+annotation_globs:
+  - "**/*mask*.nii*"
+  - "**/*seg*.nii*"
+limitations:
+  - "Controle anatômico negativo de RM abdominal; não representa normalidade clínica absoluta."
+  - "Usar como comparação anatômica/basal, nunca como prova de fígado clinicamente normal."
+warnings:
+  - "CHAOS MRI nunca deve ser descrito como normal absoluto."
+metadata:
+  intended_use: negative_anatomic_control

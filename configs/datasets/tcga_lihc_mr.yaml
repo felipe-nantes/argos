@@ -1,0 +1,26 @@
+schema: argos-dataset-config-v1
+dataset_id: tcga_lihc_mr
+dataset_name: TCGA-LIHC / TCIA MR
+rag_class: positive
+label: hcc_tcga_lihc_rm
+positive_subtype: hcc_suspicious
+phenotype_tags: []
+modality: MR
+source_format: dicom
+sequence_or_phase: unknown
+body_region: abdomen_liver
+source_url: https://www.cancerimagingarchive.net/collection/tcga-lihc/
+clinical_use_allowed: false
+research_only: true
+has_segmentation_default: false
+annotation_globs:
+  - "**/*mask*.nii*"
+  - "**/*seg*.nii*"
+  - "**/*label*.nii*"
+limitations:
+  - "Expansão positiva HCC; não assumir máscara tumoral."
+  - "Somente séries com Modality == MR são aceitas."
+warnings:
+  - "Séries CT ou outras modalidades devem ser ignoradas/rejeitadas."
+metadata:
+  intended_use: hcc_positive_tcia_mr_only
