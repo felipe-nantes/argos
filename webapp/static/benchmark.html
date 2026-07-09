@@ -46,6 +46,9 @@
           <button type="button" class="scenario-btn" data-scenario="volumetric_rag" aria-pressed="false">
             <b>Vol. + RAG</b><span>100% do fígado + contexto textual</span>
           </button>
+          <button type="button" class="scenario-btn" data-scenario="pathology_target" aria-pressed="false">
+            <b>Alvo patológico</b><span>100% do fígado + separa variante benigna</span>
+          </button>
         </div>
         <div class="types">
           <label class="type"><input type="radio" name="kind" value="positive"><b>Positivo</b><span>Todos os exames são alterados.</span></label>
@@ -92,10 +95,11 @@ function selectedKind(){return document.querySelector('input[name=kind]:checked'
     baseline:'Baseline (9 cortes)',
     volumetric:'Volumétrico (100%)',
     rag:'RAG textual',
-    volumetric_rag:'Volumétrico + RAG'
+    volumetric_rag:'Volumétrico + RAG',
+    pathology_target:'Alvo patológico'
   };
 
-// --- Toggle de cenario autorizado (baseline / volumetrico / RAG) ---
+// --- Toggle de cenario autorizado (baseline / volumetrico / RAG / alvo patologico) ---
 document.querySelectorAll('.scenario-btn').forEach(btn=>btn.onclick=()=>{
   document.querySelectorAll('.scenario-btn').forEach(b=>{const on=b===btn;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on)});
   selectedScenario=btn.dataset.scenario;

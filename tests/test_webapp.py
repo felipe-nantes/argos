@@ -241,7 +241,7 @@ def test_benchmark_upload_maps_files_to_cases(monkeypatch, tmp_path):
 def test_benchmark_manifest_accepts_authorized_rag_scenarios():
     import json
 
-    for scenario in ("baseline", "volumetric", "rag", "volumetric_rag"):
+    for scenario in ("baseline", "volumetric", "rag", "volumetric_rag", "pathology_target"):
         parsed = server._parse_benchmark_manifest(
             json.dumps({
                 "dataset_name": "Coorte",

@@ -1,0 +1,62 @@
+# Cenário pathology-target no Mac: MedGemma 27B via Ollama com cobertura volumétrica.
+# Herda o backend 27B e muda somente o prompt para focar patologia alvo.
+extends: medgemma_ollama_27b_volumetric.yaml
+medgemma_screening:
+  prompt:
+    template: |-
+      Você está analisando uma montagem de imagens de RM abdominal em modo de pesquisa.
+
+      A região do fígado está segmentada somente por contorno. Não há lesão previamente marcada. Avalie somente o parênquima hepático dentro da região segmentada.
+
+      Alvo da triagem: lesão focal hepática ou patologia hepática suspeita visível nas imagens fornecidas.
+
+      Sua tarefa NÃO é marcar qualquer alteração visual como positiva. Sua tarefa é separar:
+      1. fígado sem achado relevante;
+      2. variante anatômica benigna, estrutura vascular, pseudolesão ou artefato sem evidência suficiente de patologia alvo;
+      3. lesão focal hepática ou patologia suspeita.
+
+      Isto não é diagnóstico e não é laudo médico. Revisão humana obrigatória por radiologista, cirurgião ou médico pesquisador.
+
+      Regras obrigatórias de classificação:
+      - POSITIVA: use somente quando houver suspeita visual de lesão focal hepática ou patologia alvo. Exemplos: foco nodular/massa, alteração focal persistente entre cortes, sinal focal compatível com lesão, realce/washout suspeito quando visível, restrição focal ou achado focal não explicado por vaso/artefato.
+      - NEGATIVA: use quando não houver evidência suficiente de lesão focal/patologia alvo, mesmo que exista alteração anatômica benigna isolada. Veia calibrosa isolada, estrutura tubular contínua, vaso intra-hepático, variante vascular, alteração de perfusão provável, pseudolesão, artefato, gordura focal provável ou cisto simples provável não devem virar POSITIVA por si só.
+      - INCONCLUSIVA: use quando a qualidade, quantidade ou apresentação das imagens não permitir avaliação confiável, ou quando houver dúvida real entre variante/pseudolesão e patologia alvo.
+
+      Instruções de análise:
+      - Diferencie estrutura vascular/anatômica de massa focal.
+      - Não classifique veia calibrosa isolada como POSITIVA.
+      - Não classifique estrutura tubular contínua como massa.
+      - Não classifique pseudolesão ou artefato provável como patologia.
+      - Se observar alteração benigna não alvo, registre-a no resumo/sinais, mas mantenha NEGATIVA se não houver lesão focal suspeita.
+      - Se houver discordância visual importante ou evidência insuficiente, prefira INCONCLUSIVA.
+      - Baseie-se apenas nas imagens fornecidas.
+
+      Responda obrigatoriamente com um único objeto JSON, sem Markdown, sem emitir diagnóstico definitivo e sem recomendar conduta clínica.
+
+      Classifique resultado_hipotese em exatamente uma categoria:
+      - POSITIVA: há suspeita de lesão focal hepática ou patologia alvo nas imagens fornecidas.
+      - NEGATIVA: não há evidência visual suficiente de lesão focal hepática/patologia alvo, incluindo casos com variante anatômica benigna ou pseudolesão provável.
+      - INCONCLUSIVA: a análise não permite separar com segurança variante/artefato de patologia alvo, ou a qualidade/cobertura é insuficiente.
+
+      Use exatamente este schema:
+      {
+        "resultado_hipotese": "POSITIVA | NEGATIVA | INCONCLUSIVA",
+        "resumo_do_achado": "string",
+        "localizacao_aproximada": "string",
+        "sinais_visuais_observados": ["string"],
+        "confianca": "baixa | moderada | alta",
+        "limitacoes_da_analise": ["string"],
+        "necessidade_de_revisao_humana": true,
+        "alvo_da_triagem": "lesao_focal_hepatica_suspeita",
+        "ha_lesao_focal_suspeita": true,
+        "ha_variante_anatomica_benigna": false,
+        "ha_pseudolesao_ou_artefato": false,
+        "tipo_alteracao_nao_alvo": "none | vascular_variant | perfusion_pseudolesion | artifact | focal_fat | cystic_benign | other",
+        "justificativa_da_separacao": "string"
+      }
+
+      Importante:
+      - Não afirme que o paciente tem ou não tem câncer, tumor ou doença.
+      - Não recomende tratamento, cirurgia, biópsia ou medicação.
+      - Não substitua avaliação de radiologista ou cirurgião.
+      - A resposta destina-se exclusivamente a pesquisa e educação.
